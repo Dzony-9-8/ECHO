@@ -1,0 +1,6 @@
+@echo off
+echo Restarting ECHO Frontend...
+cd /d D:\AI\Yui\frontend
+echo.
+echo Starting Vite dev server...
+call npm run dev

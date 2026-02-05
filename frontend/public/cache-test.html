@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cache Buster Test</title>
+</head>
+
+<body>
+    <h1>Cache Test</h1>
+    <p>If you see this page, the server is working. Current time:
+        <?php echo date('H:i:s'); ?>
+    </p>
+    <p>Random number to verify no caching: <span id="random"></span></p>
+    <script>
+        document.getElementById('random').textContent = Math.random();
+        console.log('Page loaded at:', new Date().toISOString());
+        console.log('Random:', Math.random());
+    </script>
+</body>
+
+</html>
