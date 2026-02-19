@@ -26,10 +26,23 @@ export default function MessageBubble({ role, content, onSave, onExportAction })
         setIsEditing(false);
     };
 
+    const [copied, setCopied] = useState(false);
+
     const handleCopy = async () => {
         try {
-            await navigator.clipboard.writeText(cleanContent);
-            console.log('Message copied!');
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(cleanContent);
+            } else {
+                // Fallback for non-secure contexts or Electron quirks
+                const textArea = document.createElement("textarea");
+                textArea.value = cleanContent;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+            }
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
         } catch (err) {
             console.error('Failed to copy:', err);
         }
@@ -107,7 +120,11 @@ export default function MessageBubble({ role, content, onSave, onExportAction })
                         onClick={handleCopy}
                         title="Copy message"
                     >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        {copied ? (
+                            <span style={{ fontSize: '10px', color: '#4ade80', fontWeight: 'bold' }}>Copied!</span>
+                        ) : (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        )}
                     </button>
                     {role === 'user' && (
                         <button

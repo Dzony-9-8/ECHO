@@ -58,12 +58,14 @@ class ConversationMemory:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS conversation_insights (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT,
-                timestamp TEXT,
-                emotional_summary TEXT,
-                intent_summary TEXT,
-                notable_patterns TEXT,
-                confidence_level TEXT
+                session_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                emotional_summary TEXT NOT NULL,
+                intent_summary TEXT NOT NULL,
+                notable_patterns TEXT, -- JSON array
+                confidence_level TEXT CHECK (
+                    confidence_level IN ('low', 'medium', 'high')
+                )
             )
         ''')
 
@@ -236,6 +238,12 @@ class ConversationMemory:
             
         self.conn.commit()
         return cursor.rowcount
+
+    def get_session_message_count(self, session_id):
+        """Get total number of messages in a session"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM conversations WHERE session_id = ?', (session_id,))
+        return cursor.fetchone()[0]
     
     def backup_memory(self, backup_path="memory_backup.json"):
         """Backup memory to JSON file"""

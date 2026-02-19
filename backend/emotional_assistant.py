@@ -12,6 +12,7 @@ from .chess_manager import ChessManager
 from .code_interpreter import CodeInterpreter
 from .nlp_service import NLPService
 from .vision_service import VisionService
+from .search_orchestrator import intelligent_search, format_response_with_citations
 
 class EmotionalAssistant:
     def __init__(self, model_name: str = "llama3.1:8b"):
@@ -228,6 +229,17 @@ class EmotionalAssistant:
                 
                 self.memory.store_interaction(user_input, emotion_data, final_response, active_session)
                 
+                # Auto Insight Trigger (Self-healing)
+                try:
+                    count = self.memory.get_session_message_count(active_session)
+                    if count >= 12:
+                        latest = self.memory.get_latest_insight(active_session)
+                        if not latest or count % 12 == 0:
+                            print(f"DEBUG: Insight Triggered (count={count}, has_latest={bool(latest)})")
+                            self.generate_session_insight(active_session)
+                except Exception as e:
+                    print(f"DEBUG: Auto Insight error: {e}")
+                
             else:
                 # Standard blocking call
                 response = self.llm_client.generate_response(prompt)
@@ -263,6 +275,18 @@ class EmotionalAssistant:
 
                 response = self._refine_response(response)
                 self.memory.store_interaction(user_input, emotion_data, response, active_session)
+                
+                # Auto Insight Trigger (Self-healing)
+                try:
+                    count = self.memory.get_session_message_count(active_session)
+                    if count >= 12:
+                        latest = self.memory.get_latest_insight(active_session)
+                        if not latest or count % 12 == 0:
+                            print(f"DEBUG: Insight Triggered (count={count}, has_latest={bool(latest)})")
+                            self.generate_session_insight(active_session)
+                except Exception as e:
+                    print(f"DEBUG: Auto Insight error: {e}")
+                
                 return response, emotion_data
 
         except Exception as e:
@@ -525,66 +549,63 @@ ASSISTANT: """
         
     def generate_session_insight(self, active_session_id=None):
         """
-        Generate a private insight for the session.
-        Analyzes emotional trends, intent, and recurring themes.
+        Generate a private, neutral insight for the session as per SPEC 1.0.
         """
         session_id = active_session_id if active_session_id else self.session_id
         
-        # 1. Gather Context
-        recent_history = self.memory.get_recent_context(20, session_id) # Get up to 20 msgs
+        # 1. Gather Context (Recent messages)
+        recent_history = self.memory.get_recent_context(20, session_id) 
         if not recent_history:
             return None
             
-        history_text = "\n".join([f"{row[3][:10]} [Emotion: {row[4]}]: {row[3]} -> AI: {row[6][:50]}..." for row in recent_history])
+        history_text = "\n".join([f"User: {row[3]} | Emotion: {row[4]} | AI: {row[6][:100]}..." for row in recent_history])
         
-        # 2. Construct Analysis Prompt (Private, not shown to user)
-        analysis_prompt = f"""
-        ACT AS: An Expert Psychologist and Data Analyst.
-        TASK: Analyze this conversation log and generate a structured psychological profile/insight.
-        
-        CONVERSATION LOG:
-        {history_text}
-        
-        OUTPUT FORMAT (JSON ONLY):
-        {{
-            "emotional_summary": "One sentence summary of the user's emotional journey.",
-            "intent_summary": "What is the user trying to achieve? (e.g., Learning, Venting, Problem Solving)",
-            "notable_patterns": ["Pattern 1", "Pattern 2"],
-            "confidence_level": "High" | "Medium" | "Low" (Based on user clarity and consistency)
-        }}
-        
-        IMPORTANT:
-        - Be objective and neutral.
-        - Analyze the USER, not the AI.
-        - Output raw JSON only.
-        """
-        
+        # 2. Spec-Compliant Prompt
+        analysis_prompt = f"""Summarize the following conversation neutrally.
+Identify emotional trends, user intent, recurring themes, and estimate confidence.
+Avoid diagnosis. Be concise.
+
+CONVERSATION:
+{history_text}
+
+OUTPUT FORMAT (JSON ONLY):
+{{
+  "emotional_summary": "Neutral summary of emotional tone",
+  "intent_summary": "Primary user intent",
+  "notable_patterns": ["pattern1", "pattern2"],
+  "confidence_level": "low" | "medium" | "high"
+}}
+"""
         try:
             # 3. Call LLM
             response = self.llm_client.generate_response(analysis_prompt)
             
-            # 4. Parse JSON
-            # Basic cleanup to ensure valid JSON
+            # 4. Strict JSON Parsing
             import json
             json_str = response.strip()
+            # Handle markdown blocks if LLM adds them
             if "```json" in json_str:
                 json_str = json_str.split("```json")[1].split("```")[0].strip()
             elif "```" in json_str:
                 json_str = json_str.split("```")[1].split("```")[0].strip()
-                
+            
+            # Basic sanitization for trailing commas or other LLM artifacts
             insight_data = json.loads(json_str)
             
+            # Validate confidence level (MUST be low, medium, or high)
+            conf = str(insight_data.get("confidence_level", "medium")).lower()
+            if conf not in ['low', 'medium', 'high']:
+                conf = 'medium'
+
             # 5. Store in DB
             self.memory.store_insight(
                 session_id,
-                insight_data.get("emotional_summary", "Analysis failed"),
-                insight_data.get("intent_summary", "Unknown"),
+                insight_data.get("emotional_summary", "Summary unavailable"),
+                insight_data.get("intent_summary", "Intent unknown"),
                 insight_data.get("notable_patterns", []),
-                insight_data.get("confidence_level", "Low")
+                conf
             )
-            
             return insight_data
-            
         except Exception as e:
-            print(f"Error generating insight: {e}")
+            print(f"ERROR: Insight Generation Failed: {e}")
             return None

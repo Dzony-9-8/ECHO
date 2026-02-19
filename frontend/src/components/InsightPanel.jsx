@@ -1,95 +1,162 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect } from "react";
 
-export default function InsightPanel({ sessionId, onClose, onRefresh }) {
+export default function InsightPanel({ sessionId, onClose }) {
     const [insight, setInsight] = useState(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        const fetchInsight = async () => {
+            try {
+                // Fetch latest insight for this session
+                const url = sessionId
+                    ? `http://127.0.0.1:8002/insights/session/${sessionId}`
+                    : `http://127.0.0.1:8002/insights/latest`;
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.status === "success") {
+                    setInsight(data.insight);
+                    if (onLoaded) onLoaded(data.insight);
+                }
+            } catch (err) {
+                console.error("Failed to fetch insights:", err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
         fetchInsight();
     }, [sessionId]);
 
-    const fetchInsight = async () => {
-        try {
-            setLoading(true);
-            const response = await fetch(`http://127.0.0.1:8002/insight/get?session_id=${sessionId || ''}`);
-            const data = await response.json();
-            if (data.status === 'success') {
-                setInsight(data.insight);
-            }
-        } catch (error) {
-            console.error("Failed to fetch insight:", error);
-        } finally {
-            setLoading(false);
-        }
-    };
+    if (loading) return (
+        <div className="insight-panel loading">
+            <p>Analyzing conversation patterns...</p>
+        </div>
+    );
 
-    const handleGenerate = async () => {
-        try {
-            setLoading(true);
-            const response = await fetch("http://127.0.0.1:8002/insight/generate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message: "", session_id: sessionId })
-            });
-            const data = await response.json();
-            if (data.status === 'success') {
-                setInsight(data.insight);
-                if (onRefresh) onRefresh();
-            }
-        } catch (error) {
-            console.error("Failed to generate insight:", error);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    if (loading && !insight) return <div className="insight-panel loading">Analyzing session intelligence...</div>;
+    if (!insight) return (
+        <div className="insight-panel empty">
+            <p>No insights generated yet. Continue the conversation to build patterns.</p>
+            <button className="close-panel-btn" onClick={onClose}>Close</button>
+        </div>
+    );
 
     return (
-        <div className="insight-panel slide-in">
-            <div className="insight-header">
-                <h3>🧠 Core Intelligence</h3>
-                <button className="close-btn" onClick={onClose}>×</button>
+        <div className="insight-panel">
+            <div className="panel-header">
+                <h2>Session Insight</h2>
+                <button className="close-panel-btn" onClick={onClose}>×</button>
             </div>
 
-            {insight ? (
-                <div className="insight-content">
-                    <div className="insight-section">
-                        <label>Emotional Trajectory</label>
-                        <p>{insight.emotional_summary}</p>
-                    </div>
+            <div className="panel-section">
+                <h3>Emotional Tone</h3>
+                <p className="insight-text">{insight.emotional_summary}</p>
+            </div>
 
-                    <div className="insight-section">
-                        <label>Detected Intent</label>
-                        <p>{insight.intent_summary}</p>
-                    </div>
+            <div className="panel-section">
+                <h3>Primary Intent</h3>
+                <p className="insight-text">{insight.intent_summary}</p>
+            </div>
 
-                    <div className="insight-section">
-                        <label>Notable Patterns</label>
-                        <ul className="pattern-list">
-                            {insight.notable_patterns && insight.notable_patterns.map((p, i) => (
-                                <li key={i}>{p}</li>
-                            ))}
-                        </ul>
-                    </div>
+            <div className="panel-section">
+                <h3>Notable Patterns</h3>
+                <ul className="patterns-list">
+                    {insight.notable_patterns && insight.notable_patterns.map((p, i) => (
+                        <li key={i}>{p}</li>
+                    ))}
+                    {(!insight.notable_patterns || insight.notable_patterns.length === 0) && (
+                        <li>No recurring patterns identified yet.</li>
+                    )}
+                </ul>
+            </div>
 
-                    <div className="insight-footer">
-                        <span className={`confidence-badge ${insight.confidence_level?.toLowerCase()}`}>
-                            Confidence: {insight.confidence_level}
-                        </span>
-                        <button className="refresh-btn" onClick={handleGenerate} title="Re-analyze session">
-                            🔄 Update Analysis
-                        </button>
-                    </div>
-                </div>
-            ) : (
-                <div className="empty-insight">
-                    <p>No insight generated for this session yet.</p>
-                    <button className="generate-btn" onClick={handleGenerate}>
-                        Generate Session Insight
-                    </button>
-                </div>
-            )}
+            <div className="panel-section">
+                <h3>Confidence Level</h3>
+                <p className="insight-text confidence-value">{insight.confidence_level}</p>
+            </div>
+
+            <style>{`
+                .insight-panel {
+                    position: fixed;
+                    top: 80px;
+                    right: 20px;
+                    width: 320px;
+                    max-height: 80vh;
+                    background: #1e1e1e;
+                    border: 1px solid #333;
+                    border-radius: 12px;
+                    padding: 24px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+                    z-index: 1000;
+                    overflow-y: auto;
+                    color: #e0e0e0;
+                    font-family: inherit;
+                }
+                .panel-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    border-bottom: 1px solid #333;
+                    padding-bottom: 12px;
+                    margin-bottom: 20px;
+                }
+                .panel-header h2 {
+                    margin: 0;
+                    font-size: 1.2rem;
+                    font-weight: 600;
+                    color: #fff;
+                }
+                .close-panel-btn {
+                    background: none;
+                    border: none;
+                    color: #888;
+                    font-size: 1.5rem;
+                    cursor: pointer;
+                    padding: 0 5px;
+                }
+                .close-panel-btn:hover {
+                    color: #fff;
+                }
+                .panel-section {
+                    margin-bottom: 20px;
+                }
+                .panel-section h3 {
+                    font-size: 0.85rem;
+                    text-transform: uppercase;
+                    letter-spacing: 1px;
+                    color: #888;
+                    margin-bottom: 8px;
+                }
+                .insight-text {
+                    font-size: 0.95rem;
+                    line-height: 1.5;
+                    margin: 0;
+                    color: #ccc;
+                }
+                .patterns-list {
+                    margin: 0;
+                    padding-left: 20px;
+                    list-style-type: disc;
+                }
+                .patterns-list li {
+                    font-size: 0.9rem;
+                    color: #ccc;
+                    margin-bottom: 6px;
+                }
+                .confidence-value {
+                    font-weight: 600;
+                    text-transform: capitalize;
+                }
+                .loading, .empty {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    color: #888;
+                }
+            `}</style>
         </div>
     );
 }

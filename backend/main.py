@@ -81,22 +81,29 @@ def truncate_endpoint(request: TruncateRequest):
     count = assistant.truncate_conversation(request.session_id, row_count_to_keep)
     return {"status": "success", "deleted_count": count}
 
-# --- CORE INTELLIGENCE ENDPOINTS ---
+# --- CORE INTELLIGENCE ENDPOINTS (SPEC 1.0) ---
 
-@app.post("/insight/generate")
+@app.post("/insights/generate")
 def generate_insight_endpoint(request: ChatRequest):
     """Manually trigger insight generation for a session"""
     session_id = request.session_id or assistant.session_id
     insight = assistant.generate_session_insight(session_id)
     return {"status": "success", "insight": insight}
 
-@app.get("/insight/get")
-def get_insight_endpoint(session_id: str = None):
-    """Get the latest insight for a session"""
-    target_session = session_id or assistant.session_id
-    insight = assistant.memory.get_latest_insight(target_session)
+@app.get("/insights/session/{session_id}")
+def get_session_insight_endpoint(session_id: str):
+    """Get the latest insight for a specific session"""
+    insight = assistant.memory.get_latest_insight(session_id)
     if not insight:
         return {"status": "no_insight_found", "insight": None}
+    return {"status": "success", "insight": insight}
+
+@app.get("/insights/latest")
+def get_latest_insight_endpoint():
+    """Returns the most recent insight for the current active session"""
+    insight = assistant.memory.get_latest_insight(assistant.session_id)
+    if not insight:
+         return {"status": "no_insight_found", "insight": None}
     return {"status": "success", "insight": insight}
 
 # --- VOICE TRANSCRIPTION ENDPOINT ---

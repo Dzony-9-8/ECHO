@@ -1,7 +1,7 @@
 import { jsPDF } from "jspdf";
-import { formatConversation } from "./formatter";
+import { formatConversation, formatInsight } from "./formatter";
 
-export function exportConversationPDF(filename, messages) {
+export function exportConversationPDF(filename, messages, insight = null) {
     const doc = new jsPDF({ unit: "mm", format: "a4" });
 
     const marginX = 15;
@@ -11,7 +11,10 @@ export function exportConversationPDF(filename, messages) {
     const pageHeight = doc.internal.pageSize.getHeight();
     const pageWidth = doc.internal.pageSize.getWidth();
 
-    const text = formatConversation(messages);
+    let text = formatConversation(messages);
+    if (insight) {
+        text += formatInsight(insight);
+    }
     const lines = doc.splitTextToSize(
         text,
         pageWidth - marginX * 2

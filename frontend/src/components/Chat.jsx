@@ -3,6 +3,7 @@ import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
 import { exportConversationTxt } from "../utils/exportTxt";
 import { exportConversationPDF } from "../utils/exportPdf";
+import InsightPanel from "./InsightPanel";
 
 export default function Chat() {
     const [messages, setMessages] = useState([]);
@@ -14,6 +15,7 @@ export default function Chat() {
     const [showInsight, setShowInsight] = useState(false);
     const [sessionId, setSessionId] = useState("current_session"); // Placeholder or get from backend
     const [isListening, setIsListening] = useState(false);
+    const [latestInsight, setLatestInsight] = useState(null); // Track for export
     const mediaRecorderRef = useRef(null);
 
     // DRAG & DROP STATE
@@ -134,8 +136,12 @@ export default function Chat() {
     const handleExport = (type) => {
         const now = new Date();
         const filename = `AI_${now.toISOString().split('T')[0]}`;
-        if (type === 'txt') exportConversationTxt(filename, messages);
-        else if (type === 'pdf') exportConversationPDF(filename, messages);
+
+        // Simple confirmation for insight inclusion
+        const includeInsight = latestInsight ? window.confirm("Include session insight in export?") : false;
+
+        if (type === 'txt') exportConversationTxt(filename, messages, includeInsight ? latestInsight : null);
+        else if (type === 'pdf') exportConversationPDF(filename, messages, includeInsight ? latestInsight : null);
     };
 
     const handleSend = async (overrideText = null) => {
@@ -267,11 +273,11 @@ export default function Chat() {
             </button>
 
             {showInsight && (
-                <div style={{ position: 'fixed', right: 20, top: 80, zIndex: 100, background: '#1e1e1e', padding: 20, borderRadius: 8, border: '1px solid #333' }}>
-                    <h3>Session Insights</h3>
-                    <p>Coming soon...</p>
-                    <button onClick={() => setShowInsight(false)}>Close</button>
-                </div>
+                <InsightPanel
+                    sessionId={sessionId}
+                    onClose={() => setShowInsight(false)}
+                    onLoaded={setLatestInsight}
+                />
             )}
 
             <div className="messages">

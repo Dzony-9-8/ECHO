@@ -1,7 +1,10 @@
-import { formatConversation } from "./formatter";
+import { formatConversation, formatInsight } from "./formatter";
 
-export function exportConversationTxt(filename, messages) {
-    const text = formatConversation(messages);
+export function exportConversationTxt(filename, messages, insight = null) {
+    let text = formatConversation(messages);
+    if (insight) {
+        text += formatInsight(insight);
+    }
 
     const blob = new Blob([text], {
         type: "text/plain;charset=utf-8"
