@@ -120,7 +120,7 @@ class EmotionalAssistant:
             
         return "\n".join(pruned_history)
 
-    def generate_response(self, user_input, user_session_id=None, stream=True, images=None):
+    def generate_response(self, user_input, user_session_id=None, stream=True, images=None, web_search=False, provider="duckduckgo"):
         """
         Generate a response based on emotion, memory, and intelligent search.
         Now uses Smart Context Pruning.
@@ -165,7 +165,7 @@ class EmotionalAssistant:
         
         # Step 4: Intelligent Search
         current_time = datetime.now().strftime("%A, %B %d, %Y - %H:%M")
-        search_data = intelligent_search(user_input, self.llm_client, current_time=current_time)
+        search_data = intelligent_search(user_input, self.llm_client, current_time=current_time, provider=provider, force_search=web_search)
         
         external_context = ""
         if search_data.get('searched'):

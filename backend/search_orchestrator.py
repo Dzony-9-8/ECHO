@@ -177,12 +177,37 @@ def extract_content_from_sources(search_results: str, max_sources: int = 3) -> L
     return scraped_content
 
 
-def intelligent_search(user_message: str, llm_client: LLMClient, current_time: str = "Unknown") -> Dict:
+def intelligent_search(user_message: str, llm_client: LLMClient, current_time: str = "Unknown", provider: str = "duckduckgo", force_search: bool = False) -> Dict:
     """
     Main orchestration function for intelligent web search.
     """
     # Stage 1: Determine if search or weather lookup is needed
-    decision = should_search_web(user_message, llm_client, current_time=current_time)
+    if force_search:
+        # Check for obvious weather keywords even in forced mode to enable API data
+        weather_keywords = ['weather', 'temperature', 'forecast', 'rain', 'snow', 'wind']
+        is_weather_likely = any(kw in user_message.lower() for kw in weather_keywords)
+        
+        decision = {
+            'should_search': True,
+            'is_weather_query': is_weather_likely, 
+            'weather_locations': [], # Pass empty, but we need to extract location if possible. 
+                                     # Actually, without LLM extraction, we can't get the city easily.
+                                     # Let's trust the LLM 'should_search_web' to do extraction IF we ask it.
+            'queries': [user_message],
+            'language': 'English', 
+            'reason': 'User forced search'
+        }
+        
+        # If it looks like weather, we should probably run the LLM extraction ANYWAY 
+        # but just force 'should_search' to True effectively.
+        if is_weather_likely:
+             # Re-run full analysis to get location, but override the final boolean
+             full_analysis = should_search_web(user_message, llm_client, current_time=current_time)
+             decision = full_analysis
+             decision['should_search'] = True # Ensure search stays on
+             decision['reason'] += " (Forced by User)"
+    else:
+        decision = should_search_web(user_message, llm_client, current_time=current_time)
     
     results = {
         'searched': False,
@@ -194,19 +219,20 @@ def intelligent_search(user_message: str, llm_client: LLMClient, current_time: s
     }
 
     # Stage 2: Perform Weather Lookup (High Accuracy API)
-    if decision.get('is_weather_query'):
-        locations = decision.get('weather_locations', [])
-        for loc in locations:
-            w_data = get_weather(loc)
-            if w_data.get('success'):
-                results['weather_data'].append(w_data)
-        results['searched'] = True
+    # USER REQUEST: Disabled to prefer web search consensus over API data
+    # if decision.get('is_weather_query'):
+    #     locations = decision.get('weather_locations', [])
+    #     for loc in locations:
+    #         w_data = get_weather(loc)
+    #         if w_data.get('success'):
+    #             results['weather_data'].append(w_data)
+    #     results['searched'] = True
 
     # Stage 3: Perform multi-query search (if needed)
     if decision.get('should_search'):
         queries = decision.get('queries', [])
         results['queries'] = queries
-        search_results = aggregate_sources(queries)
+        search_results = aggregate_sources(queries, provider=provider)
         results['search_results'] = search_results
         
         # Stage 4: Extract content from top sources
