@@ -11,8 +11,30 @@ from .weather_tool import get_weather, format_weather_for_echo
 from cachetools import TTLCache
 import json
 
+from enum import Enum
+
+class SearchProvider(Enum):
+    DUCKDUCKGO = "duckduckgo"
+    GOOGLE = "google" # Placeholder/Future
+    SEARXNG = "searxng" # Placeholder/Future
+
 # Cache search results for 5 minutes (300 seconds) to prevent stale news/weather
-search_cache = TTLCache(maxsize=20, ttl=300)
+search_cache = TTLCache(maxsize=50, ttl=300)
+
+def perform_search(query: str, provider: str = SearchProvider.DUCKDUCKGO.value, max_results: int = 5) -> str:
+    """
+    Perform search using the specified provider.
+    Currently defaults to DuckDuckGo for all as it's the most reliable free option.
+    """
+    try:
+        # In the future, switch based on provider
+        # if provider == SearchProvider.GOOGLE.value:
+        #     return search_google(query, max_results)
+        
+        # Default to DDG
+        return search_web(query, max_results)
+    except Exception as e:
+        return f"Error performing search with {provider}: {str(e)}"
 
 
 def should_search_web(user_message: str, llm_client: LLMClient, current_time: str = "Unknown") -> Dict:
@@ -92,12 +114,13 @@ def should_search_web(user_message: str, llm_client: LLMClient, current_time: st
         }
 
 
-def aggregate_sources(queries: List[str], max_results_per_query: int = 5) -> List[Dict]:
+def aggregate_sources(queries: List[str], provider: str = "duckduckgo", max_results_per_query: int = 5) -> List[Dict]:
     """
     Perform searches for multiple queries and aggregate results.
     
     Args:
         queries: List of search queries
+        provider: Search provider to use
         max_results_per_query: Maximum results per query
         
     Returns:
@@ -107,13 +130,13 @@ def aggregate_sources(queries: List[str], max_results_per_query: int = 5) -> Lis
     
     for query in queries:
         # Check cache first
-        cache_key = f"search:{query}"
+        cache_key = f"search:{provider}:{query}"
         if cache_key in search_cache:
             all_results.extend(search_cache[cache_key])
             continue
         
         # Perform search
-        search_results_text = search_web(query, max_results=max_results_per_query)
+        search_results_text = perform_search(query, provider, max_results=max_results_per_query)
         
         # Parse results (search_web returns formatted text, we need to parse it)
         # For now, we'll store the raw text and URL extraction

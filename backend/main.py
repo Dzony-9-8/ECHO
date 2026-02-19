@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from .emotional_assistant import EmotionalAssistant
+from .research_agent import ResearchAgent
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="ECHO AI Backend")
@@ -18,12 +19,21 @@ app.add_middleware(
 # Initialize Components
 # We use the EmotionalAssistant which encapsulates LLM, Memory, and Search
 assistant = EmotionalAssistant(model_name="llama3.1:8b")
+research_agent = ResearchAgent(assistant.llm_client)
 
 class ChatRequest(BaseModel):
     message: str
     username: Optional[str] = "User"
     session_id: Optional[str] = None
     images: Optional[List[str]] = None # Base64 encoded images
+    web_search: Optional[bool] = False
+    provider: Optional[str] = "duckduckgo"
+
+class ResearchRequest(BaseModel):
+    query: str
+    depth: int = 2
+    breadth: int = 3
+    provider: str = "duckduckgo"
 
 class ChatResponse(BaseModel):
     response: str
@@ -105,6 +115,25 @@ def get_latest_insight_endpoint():
     if not insight:
          return {"status": "no_insight_found", "insight": None}
     return {"status": "success", "insight": insight}
+
+@app.post("/research/deep")
+def deep_research_endpoint(request: ResearchRequest):
+    """
+    Trigger a deep, recursive research session.
+    Returns the final report and the execution log.
+    """
+    print(f"DEBUG: Starting Deep Research on '{request.query}'")
+    try:
+        result = research_agent.deep_research(
+            query=request.query, 
+            depth=request.depth, 
+            breadth=request.breadth, 
+            provider=request.provider
+        )
+        return {"status": "success", "data": result}
+    except Exception as e:
+        print(f"ERROR: Deep Research failed: {e}")
+        return {"status": "error", "message": str(e)}
 
 # --- VOICE TRANSCRIPTION ENDPOINT ---
 import speech_recognition as sr
