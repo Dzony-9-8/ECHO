@@ -66,7 +66,14 @@ def chat_endpoint(request: ChatRequest):
     async def generate_stream():
         print("DEBUG: Starting stream generation...")
         try:
-            for chunk in assistant.generate_response(user_msg, user_session_id=session_id, stream=True, images=request.images):
+            for chunk in assistant.generate_response(
+                user_msg, 
+                user_session_id=session_id, 
+                stream=True, 
+                images=request.images,
+                web_search=request.web_search,
+                provider=request.provider
+            ):
                 print(f"DEBUG: Yielding chunk: {chunk[:10]}...") 
                 yield f"data: {json.dumps({'token': chunk})}\n\n"
             print("DEBUG: Stream finished.")
