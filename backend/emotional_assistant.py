@@ -490,7 +490,7 @@ USER'S MESSAGE:
 "{user_input}"
 
 INSTRUCTIONS:
-- If there is EXTERNAL DATA above, integrate it naturally. Prioritize API/Weather data if present.
+- If there is EXTERNAL DATA above, integrate it naturally.
 - If the user asks for information, BE PRECISE.
 - If the user shares feelings, prioritize EMOTIONAL SUPPORT as per the guidelines above.
 - Ensure your response is helpful and human-like.
