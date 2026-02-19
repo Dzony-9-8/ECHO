@@ -15,8 +15,15 @@ export default function Chat() {
     const [showInsight, setShowInsight] = useState(false);
     const [sessionId, setSessionId] = useState("current_session"); // Placeholder or get from backend
     const [isListening, setIsListening] = useState(false);
+    const [userId, setUserId] = useState("user");
     const [latestInsight, setLatestInsight] = useState(null); // Track for export
     const mediaRecorderRef = useRef(null);
+
+    // SEARCH & RESEARCH STATE
+    const [webSearch, setWebSearch] = useState(false);
+    const [deepResearchMode, setDeepResearchMode] = useState(false);
+    const [searchProvider, setSearchProvider] = useState("duckduckgo"); // duckduckgo, google, searxng
+    const [showSettings, setShowSettings] = useState(false); // For provider selection
 
     // DRAG & DROP STATE
     const [attachments, setAttachments] = useState([]); // { type: 'image'|'file', name: str, data: base64/text, preview: str }
@@ -190,7 +197,7 @@ export default function Chat() {
         setLoading(true);
 
         // Update UI immediately
-        const userMsgObj = { role: "user", content: finalMessage, images: imagesToSend }; // Add images for local display support if we want
+        const userMsgObj = { role: "user", content: finalMessage, images: imagesToSend };
         const currentHistory = [...messages, userMsgObj];
         setMessages([...currentHistory, { role: "assistant", content: "" }]);
 
@@ -200,12 +207,48 @@ export default function Chat() {
         }
 
         try {
-            // Send to Electron -> Backend
+            // DEEP RESEARCH PATH
+            if (deepResearchMode) {
+                setMessages(prev => {
+                    const updated = [...prev];
+                    updated[updated.length - 1].content = "🔬 *Starting Deep Research Agent... This may take a moment.*";
+                    return updated;
+                });
+
+                const result = await window.electronAPI.runDeepResearch({
+                    query: finalMessage,
+                    depth: 2,
+                    breadth: 3,
+                    provider: searchProvider
+                });
+
+                if (result.status === "success") {
+                    const report = result.data.report;
+                    const log = result.data.log.map(l => `[${l.step}] ${l.message}`).join("\n");
+                    const fullOutput = `${report}\n\n<details><summary>Research Log</summary>\n\n\`\`\`text\n${log}\n\`\`\`\n</details>`;
+
+                    setMessages(prev => {
+                        const updated = [...prev];
+                        updated[updated.length - 1].content = fullOutput;
+                        return updated;
+                    });
+                } else {
+                    throw new Error(result.message || "Deep Research Failed");
+                }
+
+                setLoading(false);
+                isSending.current = false;
+                return;
+            }
+
+            // STANDARD CHAT PATH
             const result = await window.electronAPI.sendMessage({
                 messages: currentHistory,
                 streamId: streamId,
                 images: imagesToSend.length > 0 ? imagesToSend : null,
-                sessionId: sessionId
+                sessionId: sessionId,
+                web_search: webSearch,
+                provider: searchProvider
             });
 
             if (result && result.success) {
@@ -215,6 +258,8 @@ export default function Chat() {
                             if (prev.length === 0) return prev;
                             const updated = [...prev];
                             const lastIdx = updated.length - 1;
+                            // If it was the "waiting" message for standard chat, overwrite it strictly on first token? 
+                            // Actually pure append is fine since we init with empty string
                             updated[lastIdx] = { ...updated[lastIdx], content: updated[lastIdx].content + String(packet.data) };
                             return updated;
                         });
@@ -299,6 +344,24 @@ export default function Chat() {
             </div>
 
             <div className="input-bar">
+                {/* SETTINGS PANEL POPUP */}
+                {showSettings && (
+                    <div className="settings-popup">
+                        <div className="settings-header">
+                            <span>Search Settings</span>
+                            <button className="close-btn" onClick={() => setShowSettings(false)}>×</button>
+                        </div>
+                        <div className="settings-content">
+                            <label>Provider:</label>
+                            <select value={searchProvider} onChange={(e) => setSearchProvider(e.target.value)}>
+                                <option value="duckduckgo">DuckDuckGo (Default)</option>
+                                <option value="google">Google (Scraper)</option>
+                                <option value="searxng">SearXNG (Local)</option>
+                            </select>
+                        </div>
+                    </div>
+                )}
+
                 {/* ATTACHMENTS PREVIEW */}
                 {attachments.length > 0 && (
                     <div className="attachments-preview">
@@ -317,11 +380,36 @@ export default function Chat() {
                 )}
 
                 <div className="input-container">
+                    {/* WEB TOGGLES */}
+                    <div className="web-controls">
+                        <button
+                            className={`control-btn ${webSearch ? 'active' : ''}`}
+                            onClick={() => { setWebSearch(!webSearch); if (deepResearchMode) setDeepResearchMode(false); }}
+                            title="Toggle Web Search"
+                        >
+                            🌐
+                        </button>
+                        <button
+                            className={`control-btn ${deepResearchMode ? 'active-deep' : ''}`}
+                            onClick={() => { setDeepResearchMode(!deepResearchMode); if (!deepResearchMode) setWebSearch(false); }}
+                            title="Deep Research Mode"
+                        >
+                            🧬
+                        </button>
+                        <button
+                            className="control-btn settings-btn"
+                            onClick={() => setShowSettings(!showSettings)}
+                            title="Search Provider Settings"
+                        >
+                            ⚙️
+                        </button>
+                    </div>
+
                     <input
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                        placeholder="Message ECHO... (Drag files here)"
+                        placeholder={deepResearchMode ? "Enter research topic..." : "Message ECHO... (Drag files here)"}
                         autoFocus
                         disabled={loading}
                     />
@@ -391,6 +479,74 @@ export default function Chat() {
                 }
                 .attachment-remove:hover {
                     color: #ff6b6b;
+                }
+                
+                /* WEB CONTROLS */
+                .web-controls {
+                    display: flex;
+                    gap: 4px;
+                    margin-right: 8px;
+                    align-items: center;
+                }
+                .control-btn {
+                    background: transparent;
+                    border: none;
+                    cursor: pointer;
+                    font-size: 1.2rem;
+                    padding: 4px;
+                    border-radius: 4px;
+                    opacity: 0.6;
+                    transition: all 0.2s;
+                }
+                .control-btn:hover {
+                    opacity: 1;
+                    background: #333;
+                }
+                .control-btn.active {
+                    opacity: 1;
+                    background: #3b82f6; /* Blue for Web */
+                    box-shadow: 0 0 8px rgba(59, 130, 246, 0.5);
+                }
+                .control-btn.active-deep {
+                    opacity: 1;
+                    background: #8b5cf6; /* Purple for Deep Research */
+                    box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+                }
+                
+                /* SETTINGS POPUP */
+                .settings-popup {
+                    position: absolute;
+                    bottom: 80px;
+                    left: 20px;
+                    background: #1e1e1e;
+                    border: 1px solid #444;
+                    border-radius: 8px;
+                    padding: 12px;
+                    z-index: 2000;
+                    width: 200px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                }
+                .settings-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 8px;
+                    border-bottom: 1px solid #333;
+                    padding-bottom: 4px;
+                }
+                .close-btn {
+                    background: none;
+                    border: none;
+                    color: #888;
+                    cursor: pointer;
+                }
+                .settings-content select {
+                    width: 100%;
+                    padding: 4px;
+                    background: #333;
+                    color: white;
+                    border: 1px solid #555;
+                    border-radius: 4px;
                 }
             `}</style>
         </div>

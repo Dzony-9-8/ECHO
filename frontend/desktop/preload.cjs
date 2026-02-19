@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
     // SYNCED WITH main.cjs: Use chat-request and structured payload
     sendMessage: (payload) => ipcRenderer.invoke('chat-request', payload),
+    runDeepResearch: (payload) => ipcRenderer.invoke('research-request', payload),
+    copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', text),
 
     // PRIVATE LINE PROTOCOL: Listens for tokens on a per-request channel
     listenToStream: (streamId, callback) => {

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, clipboard } = require("electron");
 const path = require("path");
 const fetch = require("node-fetch");
 
@@ -59,7 +59,7 @@ function createWindow() {
     });
 }
 
-ipcMain.handle("chat-request", async (event, { messages, streamId, images, sessionId }) => {
+ipcMain.handle("chat-request", async (event, { messages, streamId, images, sessionId, web_search, provider }) => {
     try {
         // BACKEND COMPATIBILITY: Extract the latest user message from the array
         const latestMsg = messages[messages.length - 1]?.content || "";
@@ -70,7 +70,9 @@ ipcMain.handle("chat-request", async (event, { messages, streamId, images, sessi
             body: JSON.stringify({
                 message: latestMsg,
                 session_id: sessionId || "default_session",
-                images: images || []
+                images: images || [],
+                web_search: web_search || false,
+                provider: provider || "duckduckgo"
             })
         });
 
@@ -112,6 +114,37 @@ ipcMain.handle("chat-request", async (event, { messages, streamId, images, sessi
     } catch (error) {
         console.error("IPC Error:", error);
         event.sender.send(`error-${streamId}`, error.message);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle("research-request", async (event, { query, depth, breadth, provider }) => {
+    try {
+        const response = await fetch("http://127.0.0.1:8002/research/deep", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                query,
+                depth: depth || 2,
+                breadth: breadth || 3,
+                provider: provider || "duckduckgo"
+            })
+        });
+
+        const data = await response.json();
+        return data;
+    } catch (error) {
+        console.error("Deep Research IPC Error:", error);
+        return { status: "error", message: error.message };
+    }
+});
+
+ipcMain.handle("copy-to-clipboard", async (event, text) => {
+    try {
+        clipboard.writeText(text);
+        return { success: true };
+    } catch (error) {
+        console.error("Clipboard Error:", error);
         return { success: false, error: error.message };
     }
 });

@@ -30,10 +30,21 @@ export default function MessageBubble({ role, content, onSave, onExportAction })
 
     const handleCopy = async () => {
         try {
+            // Priority: Electron API (Bypasses browser permission issues)
+            if (window.electronAPI && window.electronAPI.copyToClipboard) {
+                const result = await window.electronAPI.copyToClipboard(cleanContent);
+                if (result.success) {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                    return;
+                }
+            }
+
+            // Fallback: Standard Browser API
             if (navigator.clipboard && window.isSecureContext) {
                 await navigator.clipboard.writeText(cleanContent);
             } else {
-                // Fallback for non-secure contexts or Electron quirks
+                // Fallback 2: Old execCommand
                 const textArea = document.createElement("textarea");
                 textArea.value = cleanContent;
                 document.body.appendChild(textArea);
