@@ -540,6 +540,12 @@ ASSISTANT: """
 
     def reset_session(self):
         """Reset the current session"""
+        # Trigger insight for the ending session (SPEC 1.0: End of Session Trigger)
+        try:
+            self.generate_session_insight(self.session_id)
+        except Exception as e:
+            print(f"DEBUG: Failed to generate insight on reset: {e}")
+            
         self.session_id = f"session_{int(time.time())}"
         return f"Started new conversation session: {self.session_id}"
 
