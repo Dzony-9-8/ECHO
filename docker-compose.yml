@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  echo-backend:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - ECHO_MODE=desktop
+      - ACTIVE_PROVIDER=ollama
+      - OLLAMA_ENDPOINT=http://host.docker.internal:11434
+      - DATABASE_URL=sqlite:////app/data/assistant_memory.db
+      - ECHO_STORAGE_ROOT=/app/data
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
