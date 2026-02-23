@@ -9,8 +9,8 @@ export default function InsightPanel({ sessionId, onClose }) {
             try {
                 // Fetch latest insight for this session
                 const url = sessionId
-                    ? `http://127.0.0.1:8002/insights/session/${sessionId}`
-                    : `http://127.0.0.1:8002/insights/latest`;
+                    ? `http://127.0.0.1:8000/v1/insights/session/${sessionId}`
+                    : `http://127.0.0.1:8000/v1/insights/latest`;
 
                 const response = await fetch(url);
                 const data = await response.json();
@@ -31,13 +31,13 @@ export default function InsightPanel({ sessionId, onClose }) {
 
     if (loading) return (
         <div className="insight-panel loading">
-            <p>Analyzing conversation patterns...</p>
+            <p>Gathering V2 System Insights...</p>
         </div>
     );
 
     if (!insight) return (
         <div className="insight-panel empty">
-            <p>No insights generated yet. Continue the conversation to build patterns.</p>
+            <p>No insights generated yet. Continue the conversation.</p>
             <button className="close-panel-btn" onClick={onClose}>Close</button>
         </div>
     );
@@ -45,35 +45,28 @@ export default function InsightPanel({ sessionId, onClose }) {
     return (
         <div className="insight-panel">
             <div className="panel-header">
-                <h2>Session Insight</h2>
+                <h2>ECHO V2 Session Insight</h2>
                 <button className="close-panel-btn" onClick={onClose}>×</button>
             </div>
 
             <div className="panel-section">
-                <h3>Emotional Tone</h3>
-                <p className="insight-text">{insight.emotional_summary}</p>
+                <h3>RAG Matches</h3>
+                <p className="insight-text">{insight.rag_matches || "None retrieved"}</p>
             </div>
 
             <div className="panel-section">
-                <h3>Primary Intent</h3>
-                <p className="insight-text">{insight.intent_summary}</p>
+                <h3>Web Sources</h3>
+                <p className="insight-text">{insight.web_sources || "No external sources used"}</p>
             </div>
 
             <div className="panel-section">
-                <h3>Notable Patterns</h3>
-                <ul className="patterns-list">
-                    {insight.notable_patterns && insight.notable_patterns.map((p, i) => (
-                        <li key={i}>{p}</li>
-                    ))}
-                    {(!insight.notable_patterns || insight.notable_patterns.length === 0) && (
-                        <li>No recurring patterns identified yet.</li>
-                    )}
-                </ul>
+                <h3>Research Info</h3>
+                <p className="insight-text">Rounds: {insight.research_rounds || 0} | Branches: {insight.branch_count || 0}</p>
             </div>
 
             <div className="panel-section">
-                <h3>Confidence Level</h3>
-                <p className="insight-text confidence-value">{insight.confidence_level}</p>
+                <h3>Confidence Score</h3>
+                <p className="insight-text confidence-value">{insight.confidence_score || "N/A"}</p>
             </div>
 
             <style>{`

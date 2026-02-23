@@ -61,54 +61,36 @@ function createWindow() {
 
 ipcMain.handle("chat-request", async (event, { messages, streamId, images, sessionId, web_search, provider }) => {
     try {
-        // BACKEND COMPATIBILITY: Extract the latest user message from the array
-        const latestMsg = messages[messages.length - 1]?.content || "";
+        const payload = {
+            model: "llama3.1:8b",
+            // Pass full message history
+            messages: messages.map(m => ({ role: m.role, content: m.content })),
+            temperature: 0.7,
+            stream: false, // Force non-streaming for now due to V2 orchestrator limitations
+            web_enabled: web_search || false,
+            rag_enabled: false,
+            research_depth: 0,
+            mode: "chat",
+            images: images || []
+        };
 
-        const response = await fetch("http://127.0.0.1:8002/chat", {
+        const response = await fetch("http://127.0.0.1:8000/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                message: latestMsg,
-                session_id: sessionId || "default_session",
-                images: images || [],
-                web_search: web_search || false,
-                provider: provider || "duckduckgo"
-            })
+            body: JSON.stringify(payload)
         });
 
-        if (!response.body) throw new Error("No response body from backend");
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.detail || errData.error || "API Error");
+        }
 
-        response.body.on("data", (chunk) => {
-            const raw = chunk.toString();
-            const lines = raw.split("\n");
-            for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed) continue;
+        const data = await response.json();
+        const assistantMessage = data.choices[0].message.content;
 
-                if (trimmed.startsWith("data: ")) {
-                    const payload = trimmed.slice(6);
-
-                    if (payload === "[DONE]") {
-                        event.sender.send(`end-${streamId}`, "DONE");
-                        continue;
-                    }
-
-                    try {
-                        const data = JSON.parse(payload);
-                        if (data.token) {
-                            event.sender.send(`token-${streamId}`, String(data.token));
-                        }
-                    } catch (e) {
-                        // Partial JSON or non-JSON data
-                    }
-                }
-            }
-        });
-
-        response.body.on("end", () => {
-            // Backup termination
-            event.sender.send(`end-${streamId}`, "DONE");
-        });
+        // Immediately send the full block as a token, followed by DONE
+        event.sender.send(`token-${streamId}`, assistantMessage);
+        event.sender.send(`end-${streamId}`, "DONE");
 
         return { success: true };
     } catch (error) {
@@ -120,19 +102,38 @@ ipcMain.handle("chat-request", async (event, { messages, streamId, images, sessi
 
 ipcMain.handle("research-request", async (event, { query, depth, breadth, provider }) => {
     try {
-        const response = await fetch("http://127.0.0.1:8002/research/deep", {
+        const response = await fetch("http://127.0.0.1:8000/v1/chat/completions", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                query,
-                depth: depth || 2,
-                breadth: breadth || 3,
-                provider: provider || "duckduckgo"
+                model: "llama3.1:8b",
+                messages: [{ role: "user", content: query }],
+                temperature: 0.7,
+                stream: false,
+                web_enabled: true,
+                rag_enabled: false,
+                research_depth: depth || 2,
+                mode: "research",
+                images: []
             })
         });
 
+        if (!response.ok) {
+            const errData = await response.json();
+            throw new Error(errData.detail || errData.error || "API Error from Research Engine");
+        }
+
         const data = await response.json();
-        return data;
+
+        // Emulate the older Deep Research format expected by Chat.jsx
+        // Chat.jsx expects: { status: "success", data: { report: "...", log: [] } }
+        return {
+            status: "success",
+            data: {
+                report: data.choices[0].message.content,
+                log: [{ step: "Autonomous loop complete", message: "Parsed from V2 Engine" }]
+            }
+        };
     } catch (error) {
         console.error("Deep Research IPC Error:", error);
         return { status: "error", message: error.message };

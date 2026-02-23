@@ -4,6 +4,7 @@ import TypingIndicator from "./TypingIndicator";
 import { exportConversationTxt } from "../utils/exportTxt";
 import { exportConversationPDF } from "../utils/exportPdf";
 import InsightPanel from "./InsightPanel";
+import WeatherPanel from "./WeatherPanel";
 
 export default function Chat() {
     const [messages, setMessages] = useState([]);
@@ -24,6 +25,13 @@ export default function Chat() {
     const [deepResearchMode, setDeepResearchMode] = useState(false);
     const [searchProvider, setSearchProvider] = useState("duckduckgo"); // duckduckgo, google, searxng
     const [showSettings, setShowSettings] = useState(false); // For provider selection
+
+    // ECHO V2 STATES
+    const [ragEnabled, setRagEnabled] = useState(false);
+    const [weatherEnabled, setWeatherEnabled] = useState(false);
+    const [weatherData, setWeatherData] = useState(null);
+    const [researchDepth, setResearchDepth] = useState(0);
+    const [currentMode, setCurrentMode] = useState("chat");
 
     // DRAG & DROP STATE
     const [attachments, setAttachments] = useState([]); // { type: 'image'|'file', name: str, data: base64/text, preview: str }
@@ -46,7 +54,7 @@ export default function Chat() {
                 formData.append("file", audioBlob, "voice_input.wav");
 
                 try {
-                    const response = await fetch("http://127.0.0.1:8002/transcribe", { method: "POST", body: formData });
+                    const response = await fetch("http://127.0.0.1:8000/v1/audio/transcriptions", { method: "POST", body: formData });
                     const data = await response.json();
                     if (data.text) setInput(prev => prev + (prev ? " " : "") + data.text);
                 } catch (err) {
@@ -242,38 +250,49 @@ export default function Chat() {
             }
 
             // STANDARD CHAT PATH
-            const result = await window.electronAPI.sendMessage({
-                messages: currentHistory,
-                streamId: streamId,
-                images: imagesToSend.length > 0 ? imagesToSend : null,
-                sessionId: sessionId,
-                web_search: webSearch,
-                provider: searchProvider
+            const payload = {
+                model: "llama3.1:8b",
+                messages: currentHistory.map(m => ({
+                    role: m.role,
+                    content: m.content
+                })).filter(m => m.role !== 'assistant' || m.content !== ""),
+                temperature: 0.7,
+                stream: false,
+                web_enabled: webSearch,
+                rag_enabled: ragEnabled,
+                weather_enabled: weatherEnabled,
+                research_depth: deepResearchMode ? 3 : researchDepth,
+                mode: currentMode,
+                images: imagesToSend
+            };
+
+            const response = await fetch("http://127.0.0.1:8000/v1/chat/completions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
             });
 
-            if (result && result.success) {
-                stopListeningRef.current = window.electronAPI.listenToStream(streamId, (packet) => {
-                    if (packet.type === 'token') {
-                        setMessages((prev) => {
-                            if (prev.length === 0) return prev;
-                            const updated = [...prev];
-                            const lastIdx = updated.length - 1;
-                            // If it was the "waiting" message for standard chat, overwrite it strictly on first token? 
-                            // Actually pure append is fine since we init with empty string
-                            updated[lastIdx] = { ...updated[lastIdx], content: updated[lastIdx].content + String(packet.data) };
-                            return updated;
-                        });
-                    } else if (packet.type === 'end') {
-                        setLoading(false);
-                        isSending.current = false;
-                        if (stopListeningRef.current) { stopListeningRef.current(); stopListeningRef.current = null; }
-                    } else if (packet.type === 'error') {
-                        throw new Error(packet.data);
-                    }
-                });
-            } else {
-                throw new Error(result?.error || "Failed to connect.");
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || errData.error || "API Error");
             }
+
+            const data = await response.json();
+            const assistantMessage = data.choices[0].message.content;
+
+            if (data.weather_data) {
+                setWeatherData(data.weather_data);
+            }
+
+            setMessages((prev) => {
+                const updated = [...prev];
+                const lastIdx = updated.length - 1;
+                updated[lastIdx] = { ...updated[lastIdx], content: assistantMessage };
+                return updated;
+            });
+
+            setLoading(false);
+            isSending.current = false;
         } catch (error) {
             console.error("Chat Error:", error);
             setMessages(prev => {
@@ -322,6 +341,15 @@ export default function Chat() {
                     sessionId={sessionId}
                     onClose={() => setShowInsight(false)}
                     onLoaded={setLatestInsight}
+                />
+            )}
+
+            {weatherData && (
+                <WeatherPanel
+                    location={weatherData.location}
+                    current={weatherData.current}
+                    forecast={weatherData.forecast}
+                    onClose={() => setWeatherData(null)}
                 />
             )}
 
@@ -382,20 +410,56 @@ export default function Chat() {
                 <div className="input-container">
                     {/* WEB TOGGLES */}
                     <div className="web-controls">
+                        <select
+                            value={currentMode}
+                            onChange={(e) => setCurrentMode(e.target.value)}
+                            className="mode-select"
+                            title="Assistant Mode"
+                            style={{ background: '#333', color: 'white', border: 'none', padding: '4px', borderRadius: '4px', outline: 'none' }}
+                        >
+                            <option value="chat">Chat</option>
+                            <option value="analysis">Analysis</option>
+                            <option value="research">Research</option>
+                            <option value="code">Code</option>
+                            <option value="agent">Agent</option>
+                        </select>
+
                         <button
                             className={`control-btn ${webSearch ? 'active' : ''}`}
-                            onClick={() => { setWebSearch(!webSearch); if (deepResearchMode) setDeepResearchMode(false); }}
+                            onClick={() => { setWebSearch(!webSearch); }}
                             title="Toggle Web Search"
                         >
                             🌐
                         </button>
+
                         <button
-                            className={`control-btn ${deepResearchMode ? 'active-deep' : ''}`}
-                            onClick={() => { setDeepResearchMode(!deepResearchMode); if (!deepResearchMode) setWebSearch(false); }}
-                            title="Deep Research Mode"
+                            className={`control-btn ${ragEnabled ? 'active-rag' : ''}`}
+                            onClick={() => { setRagEnabled(!ragEnabled); }}
+                            title="Toggle RAG Memory"
                         >
-                            🧬
+                            🧠
                         </button>
+
+                        <button
+                            className={`control-btn ${weatherEnabled ? 'active-weather' : ''}`}
+                            onClick={() => { setWeatherEnabled(!weatherEnabled); }}
+                            title="Toggle Local Weather Intelligence"
+                            style={weatherEnabled ? { color: '#4fc3f7', borderColor: '#4fc3f7' } : {}}
+                        >
+                            ⛅
+                        </button>
+
+                        <div className="depth-slider" style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: '4px', fontSize: '0.8rem', color: '#ccc' }}>
+                            <span title="Autonomous Research Depth">🧬 Depth: {researchDepth}</span>
+                            <input
+                                type="range"
+                                min="0" max="5"
+                                value={researchDepth}
+                                onChange={(e) => setResearchDepth(parseInt(e.target.value))}
+                                style={{ width: '60px' }}
+                            />
+                        </div>
+
                         <button
                             className="control-btn settings-btn"
                             onClick={() => setShowSettings(!showSettings)}

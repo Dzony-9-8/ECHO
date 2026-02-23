@@ -134,6 +134,21 @@ button:disabled {
   cursor: not-allowed;
 }
 
+button.active {
+  background: #4ade80 !important; /* Web Search Green */
+  color: #fff !important;
+}
+
+button.active-rag {
+  background: #c084fc !important; /* RAG Purple */
+  color: #fff !important;
+}
+
+button.active-weather {
+  background: #38bdf8 !important; /* Weather Blue */
+  color: #fff !important;
+}
+
 .typing {
   color: #94a3b8;
   font-size: 0.9em;

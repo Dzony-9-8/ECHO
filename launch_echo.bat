@@ -15,7 +15,7 @@ timeout /t 2 /nobreak >nul
 
 echo [ECHO] Starting Backend...
 cd /d "%BASE_DIR%"
-start "ECHO Backend" /min cmd /c "uvicorn backend.main:app --host 127.0.0.1 --port 8002"
+start "ECHO Backend" /min cmd /c "uvicorn backend.main:app --host 127.0.0.1 --port 8000"
 
 echo [ECHO] Starting Frontend...
 cd /d "%BASE_DIR%\frontend"
