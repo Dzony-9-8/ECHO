@@ -19,13 +19,19 @@ class OllamaAdapter(LLMAdapter):
 
     def generate(self, messages, temperature=0.7, images=None, model=None, **kwargs):
         url = f"{self.endpoint}/api/chat"
+
+        # V3: Resource-adaptive context window
+        resource_profile = kwargs.get("resource_profile", "balanced")
+        ctx_map = {"low": 2048, "balanced": 4096, "high": 8192}
+        num_ctx = ctx_map.get(resource_profile, 4096)
+
         payload = {
             "model": model or DEFAULT_MODEL,
             "messages": self._format_messages(messages, images),
-            "options": {"temperature": temperature},
+            "options": {"temperature": temperature, "num_ctx": num_ctx},
             "stream": False
         }
-        
+
         response = requests.post(url, json=payload)
         response.raise_for_status()
         data = response.json()

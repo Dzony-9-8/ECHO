@@ -12,6 +12,10 @@ DEFAULT_LOCATION = os.getenv("DEFAULT_LOCATION", "Belgrade")
 MAX_RESEARCH_DEPTH = int(os.getenv("MAX_RESEARCH_DEPTH", "3"))
 MAX_EXECUTION_TIME = int(os.getenv("MAX_EXECUTION_TIME", "30"))
 
+# V3: Portable / Storage Config
+ECHO_MODE = os.getenv("ECHO_MODE", "desktop")            # "desktop" | "portable"
+ECHO_STORAGE_ROOT = os.getenv("ECHO_STORAGE_ROOT", "./data")
+
 # Database Configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./backend/assistant_memory.db")
 VECTOR_DB_PATH = os.getenv("VECTOR_DB_PATH", "./backend/vector_db")
