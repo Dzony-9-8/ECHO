@@ -393,18 +393,16 @@ export default function Chat() {
                     return (
                         <button
                             key={agent.id}
+                            className="agent-tag"
                             onClick={() => toggleAgentVisibility(agent.id)}
                             title={`Toggle ${agent.name} visibility`}
                             style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '5px',
-                                padding: '3px 10px', border: `1px solid ${isHidden ? '#333' : agent.color}`,
-                                borderRadius: '6px', background: isHidden ? 'transparent' : `${agent.color}20`,
-                                color: isHidden ? '#444' : agent.color, cursor: 'pointer',
-                                fontSize: '0.78rem', fontWeight: 500, whiteSpace: 'nowrap',
-                                transition: 'all 0.15s', flexShrink: 0
+                                borderColor: isHidden ? '#333' : agent.color,
+                                background: isHidden ? 'transparent' : `${agent.color}20`,
+                                color: isHidden ? '#444' : agent.color,
                             }}
                         >
-                            <span style={{ fontSize: '0.85rem' }}>{agent.icon}</span>
+                            <span>{agent.icon}</span>
                             {agent.name}
                         </button>
                     );

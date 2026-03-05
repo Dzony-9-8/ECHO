@@ -60,7 +60,11 @@ class Orchestrator:
         self.model_instances = {} # name -> Llama instance
         self.model_leases = {} # name -> last_used_timestamp
         
-        self.planner_llm = self._get_model_instance("planner", "ai-orchestrator/models/llama-3.1-8b.gguf")
+        # Build absolute path to the models directory reliably
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        planner_path = os.path.join(base_dir, "models", "llama-3.1-8b.gguf")
+        
+        self.planner_llm = self._get_model_instance("planner", planner_path)
         self.reasoning_llm = None
         self.coder_llm = None
         self.embed_model = None
