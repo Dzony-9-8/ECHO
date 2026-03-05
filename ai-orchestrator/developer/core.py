@@ -81,10 +81,14 @@ class DeveloperCore:
             draft_plan = local_model.run(prompt)
         else:
             raw_res = local_model(f"Create a detailed plan for: {objective} \nCONFIDENCE: 0.8", max_tokens=512)
-            if isinstance(raw_res, dict) and "choices" in raw_res:
-                draft_plan = raw_res["choices"][0]["text"].strip()
+            if isinstance(raw_res, dict) and raw_res.get("choices"):
+                draft_plan = raw_res["choices"][0].get("text", "").strip()
             else:
                 draft_plan = str(raw_res)
+            
+            # Final safety fallback
+            if not draft_plan or not draft_plan.strip():
+                draft_plan = "(Initial focus analysis complete. Escalating...)"
 
         confidence_score = self.confidence.extract_confidence(draft_plan)
 
