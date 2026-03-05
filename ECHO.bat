@@ -7,7 +7,19 @@ echo   PROJECT ECHO - Master Startup Control (AI OS)
 echo ========================================================
 
 echo.
-echo [1/3] Validating Environments...
+echo.
+echo [1/4] Terminating existing ECHO processes...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do (
+    echo Killing backend process (PID: %%a)...
+    taskkill /F /PID %%a 2>nul
+)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :5173 ^| findstr LISTENING') do (
+    echo Killing frontend process (PID: %%a)...
+    taskkill /F /PID %%a 2>nul
+)
+
+echo.
+echo [2/4] Validating Environments...
 
 if not exist ai-orchestrator\venv (
     echo [!] Missing ai-orchestrator environment.
@@ -23,17 +35,25 @@ if not exist ai-ui\node_modules (
     exit /b
 )
 
-echo.
-echo [2/3] Launching AI Backend (api/server.py)...
-start "ECHO Backend" cmd /k "cd ai-orchestrator && venv\Scripts\activate && python ..\api\server.py"
+:: Create a temporary VBS script to run commands completely hidden
+echo Set WshShell = CreateObject("WScript.Shell") > launch_hidden.vbs
+echo WshShell.Run "cmd.exe /c " ^& WScript.Arguments(0), 0, False >> launch_hidden.vbs
 
 echo.
-echo [3/3] Launching Web Interface (vite)...
-start "ECHO UI" cmd /k "cd ai-ui && npm run dev"
+echo [3/4] Launching AI Backend (Background)...
+wscript.exe launch_hidden.vbs "cd ai-orchestrator && venv\Scripts\activate && python ..\api\server.py"
+
+echo.
+echo [4/4] Launching Web Interface (Background)...
+wscript.exe launch_hidden.vbs "cd ai-ui && npm run dev"
+
+:: Clean up the temporary VBS script
+timeout /t 1 >nul
+del launch_hidden.vbs
 
 echo.
 echo ========================================================
-echo   ECHO IS INITIALIZING...
+echo   ECHO CACHING IN BACKGROUND...
 echo.
 echo   - Backend will be available at http://localhost:8000
 echo   - Frontend will be available at http://localhost:5173

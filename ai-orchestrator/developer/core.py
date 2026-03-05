@@ -80,7 +80,11 @@ class DeveloperCore:
             prompt = f"Create a detailed implementation plan for: {objective}. \nIMPORTANT: Include 'CONFIDENCE: X.XX' at the end."
             draft_plan = local_model.run(prompt)
         else:
-            draft_plan = str(local_model(f"Plan: {objective} \nCONFIDENCE: 0.8"))
+            raw_res = local_model(f"Create a detailed plan for: {objective} \nCONFIDENCE: 0.8", max_tokens=512)
+            if isinstance(raw_res, dict) and "choices" in raw_res:
+                draft_plan = raw_res["choices"][0]["text"].strip()
+            else:
+                draft_plan = str(raw_res)
 
         confidence_score = self.confidence.extract_confidence(draft_plan)
 
