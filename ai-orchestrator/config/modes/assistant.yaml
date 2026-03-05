@@ -1,0 +1,6 @@
+mode: assistant
+tool_access:
+  - read_file
+  - write_file
+autonomous: false
+max_iterations: 2

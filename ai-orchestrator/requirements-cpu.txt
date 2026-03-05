@@ -1,0 +1,10 @@
+# CPU-only: use prebuilt wheel (no compiler needed).
+# Install with:
+#   pip install -r requirements-cpu.txt
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+llama-cpp-python
+pydantic
+faiss-cpu
+sentence-transformers
+pyyaml
+numpy

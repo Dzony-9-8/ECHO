@@ -1,0 +1,36 @@
+{
+    "assistant": {
+        "mode": "assistant",
+        "tool_access": [
+            "read_file",
+            "write_file"
+        ],
+        "autonomous": false,
+        "max_iterations": 1,
+        "verbosity": "adaptive"
+    },
+    "developer": {
+        "mode": "developer",
+        "tool_access": [
+            "read_file",
+            "write_file",
+            "run_shell",
+            "run_python"
+        ],
+        "autonomous": "semi",
+        "max_iterations": 5,
+        "verbosity": "technical"
+    },
+    "research": {
+        "mode": "research",
+        "tool_access": [
+            "read_file",
+            "write_file",
+            "run_shell",
+            "run_python"
+        ],
+        "autonomous": true,
+        "max_iterations": 15,
+        "verbosity": "comprehensive"
+    }
+}

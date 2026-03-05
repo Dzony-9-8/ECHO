@@ -1,0 +1,11 @@
+# CUDA: use prebuilt wheel (no compiler needed).
+# Requires Python 3.10, 3.11 or 3.12 and CUDA 12.x. Check with: nvidia-smi
+# Pick ONE line below (match your CUDA version), then: pip install -r requirements-cuda.txt
+# cu121 = CUDA 12.1, cu122 = 12.2, cu123 = 12.3, cu124 = 12.4, cu125 = 12.5
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+llama-cpp-python
+pydantic
+faiss-cpu
+sentence-transformers
+pyyaml
+numpy

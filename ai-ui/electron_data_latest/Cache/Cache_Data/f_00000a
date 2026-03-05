@@ -1,0 +1,315 @@
+import { createHotContext as __vite__createHotContext } from "/@vite/client";import.meta.hot = __vite__createHotContext("/src/components/WeatherPanel.jsx");import __vite__cjsImport0_react_jsxDevRuntime from "/node_modules/.vite/deps/react_jsx-dev-runtime.js?v=483c03a4"; const jsxDEV = __vite__cjsImport0_react_jsxDevRuntime["jsxDEV"];
+var _s = $RefreshSig$();
+import __vite__cjsImport1_react from "/node_modules/.vite/deps/react.js?v=483c03a4"; const React = __vite__cjsImport1_react.__esModule ? __vite__cjsImport1_react.default : __vite__cjsImport1_react; const useState = __vite__cjsImport1_react["useState"];
+const WeatherPanel = ({ location, current, forecast, onClose }) => {
+  _s();
+  const [collapsed, setCollapsed] = useState(false);
+  if (!current) return null;
+  const getWeatherIcon = (code) => {
+    if (code === 0) return "☀️";
+    if (code >= 1 && code <= 3) return "🌤";
+    if (code === 45 || code === 48) return "🌫";
+    if (code >= 51 && code <= 67) return "🌧";
+    if (code >= 71 && code <= 77) return "❄️";
+    if (code >= 80 && code <= 82) return "🌧";
+    if (code >= 85 && code <= 86) return "❄️";
+    if (code >= 95) return "⛈";
+    return "☁️";
+  };
+  return /* @__PURE__ */ jsxDEV("div", { className: `weather-panel ${collapsed ? "collapsed" : ""}`, children: [
+    /* @__PURE__ */ jsxDEV("div", { className: "weather-header", onClick: () => setCollapsed(!collapsed), children: [
+      /* @__PURE__ */ jsxDEV("div", { className: "weather-header-left", children: [
+        /* @__PURE__ */ jsxDEV("span", { className: "weather-icon", children: getWeatherIcon(current.weathercode) }, void 0, false, {
+          fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+          lineNumber: 24,
+          columnNumber: 21
+        }, this),
+        /* @__PURE__ */ jsxDEV("span", { className: "weather-temp", children: [
+          current.temperature,
+          "°C"
+        ] }, void 0, true, {
+          fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+          lineNumber: 25,
+          columnNumber: 21
+        }, this),
+        /* @__PURE__ */ jsxDEV("span", { className: "weather-loc", children: location }, void 0, false, {
+          fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+          lineNumber: 26,
+          columnNumber: 21
+        }, this)
+      ] }, void 0, true, {
+        fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+        lineNumber: 23,
+        columnNumber: 17
+      }, this),
+      /* @__PURE__ */ jsxDEV("div", { className: "weather-controls", children: [
+        /* @__PURE__ */ jsxDEV("button", { className: "collapse-btn", children: collapsed ? "▼" : "▲" }, void 0, false, {
+          fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+          lineNumber: 29,
+          columnNumber: 21
+        }, this),
+        /* @__PURE__ */ jsxDEV("button", { className: "close-btn", onClick: (e) => {
+          e.stopPropagation();
+          onClose();
+        }, children: "×" }, void 0, false, {
+          fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+          lineNumber: 30,
+          columnNumber: 21
+        }, this)
+      ] }, void 0, true, {
+        fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+        lineNumber: 28,
+        columnNumber: 17
+      }, this)
+    ] }, void 0, true, {
+      fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+      lineNumber: 22,
+      columnNumber: 13
+    }, this),
+    !collapsed && /* @__PURE__ */ jsxDEV("div", { className: "weather-body", children: [
+      /* @__PURE__ */ jsxDEV("div", { className: "weather-details", children: [
+        /* @__PURE__ */ jsxDEV("p", { children: current.description || "Current Conditions" }, void 0, false, {
+          fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+          lineNumber: 37,
+          columnNumber: 25
+        }, this),
+        /* @__PURE__ */ jsxDEV("p", { children: [
+          "💨 Wind: ",
+          current.windspeed,
+          " km/h"
+        ] }, void 0, true, {
+          fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+          lineNumber: 38,
+          columnNumber: 25
+        }, this)
+      ] }, void 0, true, {
+        fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+        lineNumber: 36,
+        columnNumber: 21
+      }, this),
+      forecast && forecast.length > 0 && /* @__PURE__ */ jsxDEV("div", { className: "weather-forecast", children: [
+        /* @__PURE__ */ jsxDEV("h4", { children: "7-Day Forecast" }, void 0, false, {
+          fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+          lineNumber: 43,
+          columnNumber: 29
+        }, this),
+        /* @__PURE__ */ jsxDEV("div", { className: "forecast-scroll", children: forecast.map(
+          (day, idx) => /* @__PURE__ */ jsxDEV("div", { className: "forecast-day", children: [
+            /* @__PURE__ */ jsxDEV("div", { className: "day-name", children: new Date(day.date).toLocaleDateString("en-US", { weekday: "short" }) }, void 0, false, {
+              fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+              lineNumber: 47,
+              columnNumber: 41
+            }, this),
+            /* @__PURE__ */ jsxDEV("div", { className: "day-icon", children: getWeatherIcon(day.weathercode) }, void 0, false, {
+              fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+              lineNumber: 48,
+              columnNumber: 41
+            }, this),
+            /* @__PURE__ */ jsxDEV("div", { className: "day-temps", children: [
+              /* @__PURE__ */ jsxDEV("span", { className: "temp-max", children: [
+                Math.round(day.temp_max),
+                "°"
+              ] }, void 0, true, {
+                fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+                lineNumber: 50,
+                columnNumber: 45
+              }, this),
+              /* @__PURE__ */ jsxDEV("span", { className: "temp-min", children: [
+                Math.round(day.temp_min),
+                "°"
+              ] }, void 0, true, {
+                fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+                lineNumber: 51,
+                columnNumber: 45
+              }, this)
+            ] }, void 0, true, {
+              fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+              lineNumber: 49,
+              columnNumber: 41
+            }, this)
+          ] }, idx, true, {
+            fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+            lineNumber: 46,
+            columnNumber: 13
+          }, this)
+        ) }, void 0, false, {
+          fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+          lineNumber: 44,
+          columnNumber: 29
+        }, this)
+      ] }, void 0, true, {
+        fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+        lineNumber: 42,
+        columnNumber: 9
+      }, this)
+    ] }, void 0, true, {
+      fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+      lineNumber: 35,
+      columnNumber: 7
+    }, this),
+    /* @__PURE__ */ jsxDEV("style", { children: `
+                .weather-panel {
+                    position: fixed;
+                    right: 20px;
+                    bottom: 20px;
+                    width: 300px;
+                    background: rgba(30, 30, 30, 0.95);
+                    border: 1px solid #444;
+                    border-radius: 12px;
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+                    color: #fff;
+                    font-family: inherit;
+                    z-index: 1000;
+                    overflow: hidden;
+                    transition: all 0.3s ease;
+                }
+                .weather-panel.collapsed {
+                    width: auto;
+                    min-width: 200px;
+                }
+                .weather-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 12px 16px;
+                    cursor: pointer;
+                    background: rgba(45, 45, 45, 0.95);
+                }
+                .weather-header:hover {
+                    background: rgba(55, 55, 55, 0.95);
+                }
+                .weather-header-left {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                }
+                .weather-icon {
+                    font-size: 1.5rem;
+                }
+                .weather-temp {
+                    font-size: 1.2rem;
+                    font-weight: bold;
+                }
+                .weather-loc {
+                    font-size: 1rem;
+                    color: #aaa;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    max-width: 120px;
+                }
+                .weather-controls {
+                    display: flex;
+                    gap: 8px;
+                }
+                .collapse-btn, .close-btn {
+                    background: none;
+                    border: none;
+                    color: #888;
+                    cursor: pointer;
+                    font-size: 1rem;
+                    padding: 2px 6px;
+                }
+                .collapse-btn:hover, .close-btn:hover {
+                    color: #fff;
+                }
+                .weather-body {
+                    padding: 16px;
+                    border-top: 1px solid #333;
+                }
+                .weather-details {
+                    margin-bottom: 16px;
+                    font-size: 0.9rem;
+                    color: #ccc;
+                }
+                .weather-details p {
+                    margin: 4px 0;
+                }
+                .weather-forecast h4 {
+                    margin: 0 0 10px 0;
+                    font-size: 0.85rem;
+                    color: #888;
+                    text-transform: uppercase;
+                }
+                .forecast-scroll {
+                    display: flex;
+                    gap: 12px;
+                    overflow-x: auto;
+                    padding-bottom: 8px;
+                }
+                .forecast-scroll::-webkit-scrollbar {
+                    height: 4px;
+                }
+                .forecast-scroll::-webkit-scrollbar-track {
+                    background: #222;
+                }
+                .forecast-scroll::-webkit-scrollbar-thumb {
+                    background: #555;
+                    border-radius: 4px;
+                }
+                .forecast-day {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    min-width: 45px;
+                }
+                .day-name {
+                    font-size: 0.8rem;
+                    color: #aaa;
+                }
+                .day-icon {
+                    font-size: 1.2rem;
+                    margin: 4px 0;
+                }
+                .day-temps {
+                    display: flex;
+                    gap: 4px;
+                    font-size: 0.8rem;
+                }
+                .temp-max {
+                    color: #fff;
+                }
+                .temp-min {
+                    color: #888;
+                }
+            ` }, void 0, false, {
+      fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+      lineNumber: 61,
+      columnNumber: 13
+    }, this)
+  ] }, void 0, true, {
+    fileName: "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx",
+    lineNumber: 21,
+    columnNumber: 5
+  }, this);
+};
+_s(WeatherPanel, "IaHwFfvbaw8y79e5do0CzWS1eXc=");
+_c = WeatherPanel;
+export default WeatherPanel;
+var _c;
+$RefreshReg$(_c, "WeatherPanel");
+import * as RefreshRuntime from "/@react-refresh";
+const inWebWorker = typeof WorkerGlobalScope !== "undefined" && self instanceof WorkerGlobalScope;
+if (import.meta.hot && !inWebWorker) {
+  if (!window.$RefreshReg$) {
+    throw new Error(
+      "@vitejs/plugin-react can't detect preamble. Something is wrong."
+    );
+  }
+  RefreshRuntime.__hmr_import(import.meta.url).then((currentExports) => {
+    RefreshRuntime.registerExportsForReactRefresh("D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx", currentExports);
+    import.meta.hot.accept((nextExports) => {
+      if (!nextExports) return;
+      const invalidateMessage = RefreshRuntime.validateRefreshBoundaryAndEnqueueUpdate("D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx", currentExports, nextExports);
+      if (invalidateMessage) import.meta.hot.invalidate(invalidateMessage);
+    });
+  });
+}
+function $RefreshReg$(type, id) {
+  return RefreshRuntime.register(type, "D:/AI/Claude Code/Project ECHO/ai-ui/src/components/WeatherPanel.jsx " + id);
+}
+function $RefreshSig$() {
+  return RefreshRuntime.createSignatureFunctionForTransform();
+}
+
+//# sourceMappingURL=data:application/json;base64,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O0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUE7QUFBQTtBQUFBO0FBQUEsaUJBQVI7QUFBQTtBQUFBO0FBQUE7QUFBQSxXQTZIRTtBQUFBLE9BcktOO0FBQUE7QUFBQTtBQUFBO0FBQUEsU0FzS0E7QUFFUjtBQUFFZCxHQTFMSUwsY0FBWTtBQUFBLEtBQVpBO0FBNExOLGVBQWVBO0FBQWEsSUFBQTRCO0FBQUEsYUFBQUEsSUFBQSIsIm5hbWVzIjpbIlJlYWN0IiwidXNlU3RhdGUiLCJXZWF0aGVyUGFuZWwiLCJsb2NhdGlvbiIsImN1cnJlbnQiLCJmb3JlY2FzdCIsIm9uQ2xvc2UiLCJfcyIsImNvbGxhcHNlZCIsInNldENvbGxhcHNlZCIsImdldFdlYXRoZXJJY29uIiwiY29kZSIsIndlYXRoZXJjb2RlIiwidGVtcGVyYXR1cmUiLCJlIiwic3RvcFByb3BhZ2F0aW9uIiwiZGVzY3JpcHRpb24iLCJ3aW5kc3BlZWQiLCJsZW5ndGgiLCJtYXAiLCJkYXkiLCJpZHgiLCJEYXRlIiwiZGF0ZSIsInRvTG9jYWxlRGF0ZVN0cmluZyIsIndlZWtkYXkiLCJNYXRoIiwicm91bmQiLCJ0ZW1wX21heCIsInRlbXBfbWluIiwiX2MiXSwiaWdub3JlTGlzdCI6W10sInNvdXJjZXMiOlsiV2VhdGhlclBhbmVsLmpzeCJdLCJzb3VyY2VzQ29udGVudCI6WyJpbXBvcnQgUmVhY3QsIHsgdXNlU3RhdGUgfSBmcm9tICdyZWFjdCc7XHJcblxyXG5jb25zdCBXZWF0aGVyUGFuZWwgPSAoeyBsb2NhdGlvbiwgY3VycmVudCwgZm9yZWNhc3QsIG9uQ2xvc2UgfSkgPT4ge1xyXG4gICAgY29uc3QgW2NvbGxhcHNlZCwgc2V0Q29sbGFwc2VkXSA9IHVzZVN0YXRlKGZhbHNlKTtcclxuXHJcbiAgICBpZiAoIWN1cnJlbnQpIHJldHVybiBudWxsO1xyXG5cclxuICAgIGNvbnN0IGdldFdlYXRoZXJJY29uID0gKGNvZGUpID0+IHtcclxuICAgICAgICBpZiAoY29kZSA9PT0gMCkgcmV0dXJuIFwi4piA77iPXCI7XHJcbiAgICAgICAgaWYgKGNvZGUgPj0gMSAmJiBjb2RlIDw9IDMpIHJldHVybiBcIvCfjKRcIjtcclxuICAgICAgICBpZiAoY29kZSA9PT0gNDUgfHwgY29kZSA9PT0gNDgpIHJldHVybiBcIvCfjKtcIjtcclxuICAgICAgICBpZiAoY29kZSA+PSA1MSAmJiBjb2RlIDw9IDY3KSByZXR1cm4gXCLwn4ynXCI7XHJcbiAgICAgICAgaWYgKGNvZGUgPj0gNzEgJiYgY29kZSA8PSA3NykgcmV0dXJuIFwi4p2E77iPXCI7XHJcbiAgICAgICAgaWYgKGNvZGUgPj0gODAgJiYgY29kZSA8PSA4MikgcmV0dXJuIFwi8J+Mp1wiO1xyXG4gICAgICAgIGlmIChjb2RlID49IDg1ICYmIGNvZGUgPD0gODYpIHJldHVybiBcIuKdhO+4j1wiO1xyXG4gICAgICAgIGlmIChjb2RlID49IDk1KSByZXR1cm4gXCLim4hcIjtcclxuICAgICAgICByZXR1cm4gXCLimIHvuI9cIjtcclxuICAgIH07XHJcblxyXG4gICAgcmV0dXJuIChcclxuICAgICAgICA8ZGl2IGNsYXNzTmFtZT17YHdlYXRoZXItcGFuZWwgJHtjb2xsYXBzZWQgPyAnY29sbGFwc2VkJyA6ICcnfWB9PlxyXG4gICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cIndlYXRoZXItaGVhZGVyXCIgb25DbGljaz17KCkgPT4gc2V0Q29sbGFwc2VkKCFjb2xsYXBzZWQpfT5cclxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwid2VhdGhlci1oZWFkZXItbGVmdFwiPlxyXG4gICAgICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cIndlYXRoZXItaWNvblwiPntnZXRXZWF0aGVySWNvbihjdXJyZW50LndlYXRoZXJjb2RlKX08L3NwYW4+XHJcbiAgICAgICAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwid2VhdGhlci10ZW1wXCI+e2N1cnJlbnQudGVtcGVyYXR1cmV9wrBDPC9zcGFuPlxyXG4gICAgICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cIndlYXRoZXItbG9jXCI+e2xvY2F0aW9ufTwvc3Bhbj5cclxuICAgICAgICAgICAgICAgIDwvZGl2PlxyXG4gICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJ3ZWF0aGVyLWNvbnRyb2xzXCI+XHJcbiAgICAgICAgICAgICAgICAgICAgPGJ1dHRvbiBjbGFzc05hbWU9XCJjb2xsYXBzZS1idG5cIj57Y29sbGFwc2VkID8gJ+KWvCcgOiAn4payJ308L2J1dHRvbj5cclxuICAgICAgICAgICAgICAgICAgICA8YnV0dG9uIGNsYXNzTmFtZT1cImNsb3NlLWJ0blwiIG9uQ2xpY2s9eyhlKSA9PiB7IGUuc3RvcFByb3BhZ2F0aW9uKCk7IG9uQ2xvc2UoKTsgfX0+w5c8L2J1dHRvbj5cclxuICAgICAgICAgICAgICAgIDwvZGl2PlxyXG4gICAgICAgICAgICA8L2Rpdj5cclxuXHJcbiAgICAgICAgICAgIHshY29sbGFwc2VkICYmIChcclxuICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwid2VhdGhlci1ib2R5XCI+XHJcbiAgICAgICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJ3ZWF0aGVyLWRldGFpbHNcIj5cclxuICAgICAgICAgICAgICAgICAgICAgICAgPHA+e2N1cnJlbnQuZGVzY3JpcHRpb24gfHwgJ0N1cnJlbnQgQ29uZGl0aW9ucyd9PC9wPlxyXG4gICAgICAgICAgICAgICAgICAgICAgICA8cD7wn5KoIFdpbmQ6IHtjdXJyZW50LndpbmRzcGVlZH0ga20vaDwvcD5cclxuICAgICAgICAgICAgICAgICAgICA8L2Rpdj5cclxuXHJcbiAgICAgICAgICAgICAgICAgICAge2ZvcmVjYXN0ICYmIGZvcmVjYXN0Lmxlbmd0aCA+IDAgJiYgKFxyXG4gICAgICAgICAgICAgICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cIndlYXRoZXItZm9yZWNhc3RcIj5cclxuICAgICAgICAgICAgICAgICAgICAgICAgICAgIDxoND43LURheSBGb3JlY2FzdDwvaDQ+XHJcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICA8ZGl2IGNsYXNzTmFtZT1cImZvcmVjYXN0LXNjcm9sbFwiPlxyXG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHtmb3JlY2FzdC5tYXAoKGRheSwgaWR4KSA9PiAoXHJcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIDxkaXYga2V5PXtpZHh9IGNsYXNzTmFtZT1cImZvcmVjYXN0LWRheVwiPlxyXG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgPGRpdiBjbGFzc05hbWU9XCJkYXktbmFtZVwiPntuZXcgRGF0ZShkYXkuZGF0ZSkudG9Mb2NhbGVEYXRlU3RyaW5nKCdlbi1VUycsIHsgd2Vla2RheTogJ3Nob3J0JyB9KX08L2Rpdj5cclxuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZGF5LWljb25cIj57Z2V0V2VhdGhlckljb24oZGF5LndlYXRoZXJjb2RlKX08L2Rpdj5cclxuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIDxkaXYgY2xhc3NOYW1lPVwiZGF5LXRlbXBzXCI+XHJcbiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgPHNwYW4gY2xhc3NOYW1lPVwidGVtcC1tYXhcIj57TWF0aC5yb3VuZChkYXkudGVtcF9tYXgpfcKwPC9zcGFuPlxyXG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIDxzcGFuIGNsYXNzTmFtZT1cInRlbXAtbWluXCI+e01hdGgucm91bmQoZGF5LnRlbXBfbWluKX3CsDwvc3Bhbj5cclxuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIDwvZGl2PlxyXG4gICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA8L2Rpdj5cclxuICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICApKX1cclxuICAgICAgICAgICAgICAgICAgICAgICAgICAgIDwvZGl2PlxyXG4gICAgICAgICAgICAgICAgICAgICAgICA8L2Rpdj5cclxuICAgICAgICAgICAgICAgICAgICApfVxyXG4gICAgICAgICAgICAgICAgPC9kaXY+XHJcbiAgICAgICAgICAgICl9XHJcblxyXG4gICAgICAgICAgICA8c3R5bGU+e2BcclxuICAgICAgICAgICAgICAgIC53ZWF0aGVyLXBhbmVsIHtcclxuICAgICAgICAgICAgICAgICAgICBwb3NpdGlvbjogZml4ZWQ7XHJcbiAgICAgICAgICAgICAgICAgICAgcmlnaHQ6IDIwcHg7XHJcbiAgICAgICAgICAgICAgICAgICAgYm90dG9tOiAyMHB4O1xyXG4gICAgICAgICAgICAgICAgICAgIHdpZHRoOiAzMDBweDtcclxuICAgICAgICAgICAgICAgICAgICBiYWNrZ3JvdW5kOiByZ2JhKDMwLCAzMCwgMzAsIDAuOTUpO1xyXG4gICAgICAgICAgICAgICAgICAgIGJvcmRlcjogMXB4IHNvbGlkICM0NDQ7XHJcbiAgICAgICAgICAgICAgICAgICAgYm9yZGVyLXJhZGl1czogMTJweDtcclxuICAgICAgICAgICAgICAgICAgICBib3gtc2hhZG93OiAwIDhweCAzMnB4IHJnYmEoMCwgMCwgMCwgMC41KTtcclxuICAgICAgICAgICAgICAgICAgICBjb2xvcjogI2ZmZjtcclxuICAgICAgICAgICAgICAgICAgICBmb250LWZhbWlseTogaW5oZXJpdDtcclxuICAgICAgICAgICAgICAgICAgICB6LWluZGV4OiAxMDAwO1xyXG4gICAgICAgICAgICAgICAgICAgIG92ZXJmbG93OiBoaWRkZW47XHJcbiAgICAgICAgICAgICAgICAgICAgdHJhbnNpdGlvbjogYWxsIDAuM3MgZWFzZTtcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC53ZWF0aGVyLXBhbmVsLmNvbGxhcHNlZCB7XHJcbiAgICAgICAgICAgICAgICAgICAgd2lkdGg6IGF1dG87XHJcbiAgICAgICAgICAgICAgICAgICAgbWluLXdpZHRoOiAyMDBweDtcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC53ZWF0aGVyLWhlYWRlciB7XHJcbiAgICAgICAgICAgICAgICAgICAgZGlzcGxheTogZmxleDtcclxuICAgICAgICAgICAgICAgICAgICBqdXN0aWZ5LWNvbnRlbnQ6IHNwYWNlLWJldHdlZW47XHJcbiAgICAgICAgICAgICAgICAgICAgYWxpZ24taXRlbXM6IGNlbnRlcjtcclxuICAgICAgICAgICAgICAgICAgICBwYWRkaW5nOiAxMnB4IDE2cHg7XHJcbiAgICAgICAgICAgICAgICAgICAgY3Vyc29yOiBwb2ludGVyO1xyXG4gICAgICAgICAgICAgICAgICAgIGJhY2tncm91bmQ6IHJnYmEoNDUsIDQ1LCA0NSwgMC45NSk7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgICAgICAud2VhdGhlci1oZWFkZXI6aG92ZXIge1xyXG4gICAgICAgICAgICAgICAgICAgIGJhY2tncm91bmQ6IHJnYmEoNTUsIDU1LCA1NSwgMC45NSk7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgICAgICAud2VhdGhlci1oZWFkZXItbGVmdCB7XHJcbiAgICAgICAgICAgICAgICAgICAgZGlzcGxheTogZmxleDtcclxuICAgICAgICAgICAgICAgICAgICBhbGlnbi1pdGVtczogY2VudGVyO1xyXG4gICAgICAgICAgICAgICAgICAgIGdhcDogMTBweDtcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC53ZWF0aGVyLWljb24ge1xyXG4gICAgICAgICAgICAgICAgICAgIGZvbnQtc2l6ZTogMS41cmVtO1xyXG4gICAgICAgICAgICAgICAgfVxyXG4gICAgICAgICAgICAgICAgLndlYXRoZXItdGVtcCB7XHJcbiAgICAgICAgICAgICAgICAgICAgZm9udC1zaXplOiAxLjJyZW07XHJcbiAgICAgICAgICAgICAgICAgICAgZm9udC13ZWlnaHQ6IGJvbGQ7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgICAgICAud2VhdGhlci1sb2Mge1xyXG4gICAgICAgICAgICAgICAgICAgIGZvbnQtc2l6ZTogMXJlbTtcclxuICAgICAgICAgICAgICAgICAgICBjb2xvcjogI2FhYTtcclxuICAgICAgICAgICAgICAgICAgICB3aGl0ZS1zcGFjZTogbm93cmFwO1xyXG4gICAgICAgICAgICAgICAgICAgIG92ZXJmbG93OiBoaWRkZW47XHJcbiAgICAgICAgICAgICAgICAgICAgdGV4dC1vdmVyZmxvdzogZWxsaXBzaXM7XHJcbiAgICAgICAgICAgICAgICAgICAgbWF4LXdpZHRoOiAxMjBweDtcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC53ZWF0aGVyLWNvbnRyb2xzIHtcclxuICAgICAgICAgICAgICAgICAgICBkaXNwbGF5OiBmbGV4O1xyXG4gICAgICAgICAgICAgICAgICAgIGdhcDogOHB4O1xyXG4gICAgICAgICAgICAgICAgfVxyXG4gICAgICAgICAgICAgICAgLmNvbGxhcHNlLWJ0biwgLmNsb3NlLWJ0biB7XHJcbiAgICAgICAgICAgICAgICAgICAgYmFja2dyb3VuZDogbm9uZTtcclxuICAgICAgICAgICAgICAgICAgICBib3JkZXI6IG5vbmU7XHJcbiAgICAgICAgICAgICAgICAgICAgY29sb3I6ICM4ODg7XHJcbiAgICAgICAgICAgICAgICAgICAgY3Vyc29yOiBwb2ludGVyO1xyXG4gICAgICAgICAgICAgICAgICAgIGZvbnQtc2l6ZTogMXJlbTtcclxuICAgICAgICAgICAgICAgICAgICBwYWRkaW5nOiAycHggNnB4O1xyXG4gICAgICAgICAgICAgICAgfVxyXG4gICAgICAgICAgICAgICAgLmNvbGxhcHNlLWJ0bjpob3ZlciwgLmNsb3NlLWJ0bjpob3ZlciB7XHJcbiAgICAgICAgICAgICAgICAgICAgY29sb3I6ICNmZmY7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgICAgICAud2VhdGhlci1ib2R5IHtcclxuICAgICAgICAgICAgICAgICAgICBwYWRkaW5nOiAxNnB4O1xyXG4gICAgICAgICAgICAgICAgICAgIGJvcmRlci10b3A6IDFweCBzb2xpZCAjMzMzO1xyXG4gICAgICAgICAgICAgICAgfVxyXG4gICAgICAgICAgICAgICAgLndlYXRoZXItZGV0YWlscyB7XHJcbiAgICAgICAgICAgICAgICAgICAgbWFyZ2luLWJvdHRvbTogMTZweDtcclxuICAgICAgICAgICAgICAgICAgICBmb250LXNpemU6IDAuOXJlbTtcclxuICAgICAgICAgICAgICAgICAgICBjb2xvcjogI2NjYztcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC53ZWF0aGVyLWRldGFpbHMgcCB7XHJcbiAgICAgICAgICAgICAgICAgICAgbWFyZ2luOiA0cHggMDtcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC53ZWF0aGVyLWZvcmVjYXN0IGg0IHtcclxuICAgICAgICAgICAgICAgICAgICBtYXJnaW46IDAgMCAxMHB4IDA7XHJcbiAgICAgICAgICAgICAgICAgICAgZm9udC1zaXplOiAwLjg1cmVtO1xyXG4gICAgICAgICAgICAgICAgICAgIGNvbG9yOiAjODg4O1xyXG4gICAgICAgICAgICAgICAgICAgIHRleHQtdHJhbnNmb3JtOiB1cHBlcmNhc2U7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgICAgICAuZm9yZWNhc3Qtc2Nyb2xsIHtcclxuICAgICAgICAgICAgICAgICAgICBkaXNwbGF5OiBmbGV4O1xyXG4gICAgICAgICAgICAgICAgICAgIGdhcDogMTJweDtcclxuICAgICAgICAgICAgICAgICAgICBvdmVyZmxvdy14OiBhdXRvO1xyXG4gICAgICAgICAgICAgICAgICAgIHBhZGRpbmctYm90dG9tOiA4cHg7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgICAgICAuZm9yZWNhc3Qtc2Nyb2xsOjotd2Via2l0LXNjcm9sbGJhciB7XHJcbiAgICAgICAgICAgICAgICAgICAgaGVpZ2h0OiA0cHg7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgICAgICAuZm9yZWNhc3Qtc2Nyb2xsOjotd2Via2l0LXNjcm9sbGJhci10cmFjayB7XHJcbiAgICAgICAgICAgICAgICAgICAgYmFja2dyb3VuZDogIzIyMjtcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC5mb3JlY2FzdC1zY3JvbGw6Oi13ZWJraXQtc2Nyb2xsYmFyLXRodW1iIHtcclxuICAgICAgICAgICAgICAgICAgICBiYWNrZ3JvdW5kOiAjNTU1O1xyXG4gICAgICAgICAgICAgICAgICAgIGJvcmRlci1yYWRpdXM6IDRweDtcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC5mb3JlY2FzdC1kYXkge1xyXG4gICAgICAgICAgICAgICAgICAgIGRpc3BsYXk6IGZsZXg7XHJcbiAgICAgICAgICAgICAgICAgICAgZmxleC1kaXJlY3Rpb246IGNvbHVtbjtcclxuICAgICAgICAgICAgICAgICAgICBhbGlnbi1pdGVtczogY2VudGVyO1xyXG4gICAgICAgICAgICAgICAgICAgIG1pbi13aWR0aDogNDVweDtcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC5kYXktbmFtZSB7XHJcbiAgICAgICAgICAgICAgICAgICAgZm9udC1zaXplOiAwLjhyZW07XHJcbiAgICAgICAgICAgICAgICAgICAgY29sb3I6ICNhYWE7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgICAgICAuZGF5LWljb24ge1xyXG4gICAgICAgICAgICAgICAgICAgIGZvbnQtc2l6ZTogMS4ycmVtO1xyXG4gICAgICAgICAgICAgICAgICAgIG1hcmdpbjogNHB4IDA7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgICAgICAuZGF5LXRlbXBzIHtcclxuICAgICAgICAgICAgICAgICAgICBkaXNwbGF5OiBmbGV4O1xyXG4gICAgICAgICAgICAgICAgICAgIGdhcDogNHB4O1xyXG4gICAgICAgICAgICAgICAgICAgIGZvbnQtc2l6ZTogMC44cmVtO1xyXG4gICAgICAgICAgICAgICAgfVxyXG4gICAgICAgICAgICAgICAgLnRlbXAtbWF4IHtcclxuICAgICAgICAgICAgICAgICAgICBjb2xvcjogI2ZmZjtcclxuICAgICAgICAgICAgICAgIH1cclxuICAgICAgICAgICAgICAgIC50ZW1wLW1pbiB7XHJcbiAgICAgICAgICAgICAgICAgICAgY29sb3I6ICM4ODg7XHJcbiAgICAgICAgICAgICAgICB9XHJcbiAgICAgICAgICAgIGB9PC9zdHlsZT5cclxuICAgICAgICA8L2Rpdj5cclxuICAgICk7XHJcbn07XHJcblxyXG5leHBvcnQgZGVmYXVsdCBXZWF0aGVyUGFuZWw7XHJcbiJdLCJmaWxlIjoiRDovQUkvQ2xhdWRlIENvZGUvUHJvamVjdCBFQ0hPL2FpLXVpL3NyYy9jb21wb25lbnRzL1dlYXRoZXJQYW5lbC5qc3gifQ==

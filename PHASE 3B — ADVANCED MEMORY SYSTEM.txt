@@ -1,0 +1,167 @@
+🧠 PHASE 3B — ADVANCED MEMORY SYSTEM
+🎯 Objective
+
+Transform memory from:
+
+“store everything forever”
+
+into:
+
+“store only what matters, summarize intelligently, forget safely”
+
+🧠 MEMORY TYPES (FINAL FORM)
+Memory Type	Purpose
+Short-term	Current conversation context
+Episodic	Conversation summaries
+Long-term	High-value facts & preferences
+Semantic	Embedding-based retrieval
+Meta	Importance & decay metadata
+📁 STRUCTURE UPDATE
+memory/
+├── short_term.py        (unchanged)
+├── episodic.py          (UPDATED)
+├── long_term.py         (UPDATED)
+├── embeddings.py        (unchanged)
+├── summarizer.py        👈 NEW
+├── importance.py        👈 NEW
+└── decay.py             👈 NEW
+🧠 memory/importance.py
+
+Decides what is worth remembering
+
+class ImportanceScorer:
+    def score(self, text: str) -> float:
+        """
+        0.0–1.0 scale
+        """
+        keywords = [
+            "always", "never", "prefer", "my system",
+            "important", "remember", "from now on"
+        ]
+
+        score = 0.2
+        for k in keywords:
+            if k in text.lower():
+                score += 0.15
+
+        return min(score, 1.0)
+🧠 memory/summarizer.py
+
+Compress conversations into episodes
+
+class ConversationSummarizer:
+    def __init__(self, model):
+        self.model = model
+
+    def summarize(self, dialogue: str) -> str:
+        prompt = f"""
+Summarize the following conversation into
+a short factual memory.
+
+Rules:
+- No dialogue
+- No opinions
+- No fluff
+- Max 5 bullet points
+
+Conversation:
+{dialogue}
+"""
+        res = self.model(prompt, max_tokens=256)
+        return res["choices"][0]["text"].strip()
+🧠 memory/decay.py
+
+Forgetting logic
+
+import time
+
+class MemoryDecay:
+    def __init__(self, half_life_days=30):
+        self.half_life = half_life_days * 86400
+
+    def decay_factor(self, timestamp: float) -> float:
+        age = time.time() - timestamp
+        return 0.5 ** (age / self.half_life)
+🧠 memory/long_term.py (UPDATED)
+
+Now stores metadata.
+
+class LongTermMemory:
+    def __init__(self, dim=1024):
+        self.index = faiss.IndexFlatL2(dim)
+        self.records = []
+
+    def add(self, embedding, text, importance):
+        self.index.add(np.array([embedding]))
+        self.records.append({
+            "text": text,
+            "importance": importance,
+            "timestamp": time.time()
+        })
+
+    def query(self, embedding, k=5, decay=None):
+        if self.index.ntotal == 0:
+            return []
+
+        _, ids = self.index.search(np.array([embedding]), k)
+        results = []
+
+        for i in ids[0]:
+            rec = self.records[i]
+            score = rec["importance"]
+
+            if decay:
+                score *= decay.decay_factor(rec["timestamp"])
+
+            if score > 0.15:
+                results.append(rec["text"])
+
+        return results
+🧠 memory/episodic.py (UPDATED)
+class EpisodicMemory:
+    def __init__(self):
+        self.episodes = []
+
+    def add(self, summary: str):
+        self.episodes.append({
+            "summary": summary,
+            "timestamp": time.time()
+        })
+
+    def recent(self, n=3):
+        return [e["summary"] for e in self.episodes[-n:]]
+🔁 MEMORY WRITE POLICY (VERY IMPORTANT)
+
+Add this rule to your planner instructions:
+
+❗ The system may only write to long-term memory if:
+
+importance score ≥ 0.4
+
+OR user explicitly requests remembering
+
+This avoids pollution.
+
+🚀 main.py (UPDATED MEMORY FLOW)
+Add imports
+from memory.importance import ImportanceScorer
+from memory.summarizer import ConversationSummarizer
+from memory.decay import MemoryDecay
+Initialize memory helpers
+importance = ImportanceScorer()
+decay = MemoryDecay()
+summarizer = ConversationSummarizer(planner_llm)
+Replace memory write logic
+score = importance.score(user)
+
+if score >= 0.4:
+    long_mem.add(emb, user, score)
+Episodic summarization trigger
+
+(every 5 turns)
+
+if len(short_mem.buffer) >= 5:
+    dialogue = short_mem.context()
+    summary = summarizer.summarize(dialogue)
+    episodic.add(summary)
+    short_mem.buffer.clear()

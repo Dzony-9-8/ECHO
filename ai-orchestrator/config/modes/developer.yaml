@@ -1,0 +1,8 @@
+mode: developer
+tool_access:
+  - read_file
+  - write_file
+  - run_shell
+  - run_python
+autonomous: semi
+max_iterations: 5

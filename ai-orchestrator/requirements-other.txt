@@ -1,0 +1,6 @@
+# All deps except llama-cpp-python (install that with install-cuda.bat or install-cpu.bat)
+pydantic
+faiss-cpu
+sentence-transformers
+pyyaml
+numpy

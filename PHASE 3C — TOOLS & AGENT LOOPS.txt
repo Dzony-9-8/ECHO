@@ -1,0 +1,214 @@
+🧠 PHASE 3C — TOOLS & AGENT LOOPS
+🎯 Objective
+
+Enable the AI to:
+
+Read/write files
+
+Execute shell commands
+
+Refactor codebases
+
+Verify its own output
+
+Retry intelligently
+
+WITHOUT:
+
+Infinite loops
+
+Tool hallucinations
+
+Hidden side effects
+
+🧠 CORE PRINCIPLE (IMPORTANT)
+
+LLMs never directly call tools.
+They request tool usage → Router validates → Tool executes → Result returned.
+
+This keeps the system deterministic and safe.
+
+📁 STRUCTURE UPDATE
+ai-orchestrator/
+├── tools/
+│   ├── registry.py
+│   ├── file_tools.py
+│   ├── shell_tools.py
+│   └── python_tools.py
+├── agents/
+│   ├── executor.py
+│   ├── verifier.py
+│   └── loop.py
+└── core/
+    ├── planner.py   (UPDATED)
+    └── router.py    (UPDATED)
+🧰 tools/registry.py
+
+Single source of truth
+
+class ToolRegistry:
+    def __init__(self):
+        self.tools = {}
+
+    def register(self, name, fn, description):
+        self.tools[name] = {
+            "fn": fn,
+            "description": description
+        }
+
+    def get(self, name):
+        return self.tools.get(name)
+
+    def list(self):
+        return {
+            k: v["description"] for k, v in self.tools.items()
+        }
+📁 tools/file_tools.py
+from pathlib import Path
+
+def read_file(path: str) -> str:
+    return Path(path).read_text(encoding="utf-8")
+
+def write_file(path: str, content: str):
+    Path(path).write_text(content, encoding="utf-8")
+    return "OK"
+🖥 tools/shell_tools.py
+
+Very limited shell access
+
+import subprocess
+
+ALLOWED_COMMANDS = ["git", "ls", "dir", "pip", "python"]
+
+def run_shell(command: str):
+    if not any(command.startswith(c) for c in ALLOWED_COMMANDS):
+        raise PermissionError("Command not allowed")
+
+    result = subprocess.run(
+        command,
+        shell=True,
+        capture_output=True,
+        text=True
+    )
+    return result.stdout + result.stderr
+🐍 tools/python_tools.py
+def run_python(code: str):
+    local_env = {}
+    exec(code, {}, local_env)
+    return local_env
+🤖 agents/executor.py
+
+Performs actions
+
+class ExecutionAgent:
+    def __init__(self, tools):
+        self.tools = tools
+
+    def execute(self, tool_name, args):
+        tool = self.tools.get(tool_name)
+        if not tool:
+            raise ValueError("Unknown tool")
+
+        return tool["fn"](**args)
+🧪 agents/verifier.py
+
+Checks correctness
+
+class VerificationAgent:
+    def verify(self, task, output) -> bool:
+        """
+        Placeholder:
+        - tests pass?
+        - syntax valid?
+        - file exists?
+        """
+        if output is None:
+            return False
+        return True
+🔁 agents/loop.py
+
+Agent loop controller
+
+class AgentLoop:
+    def __init__(self, executor, verifier, max_iters=3):
+        self.executor = executor
+        self.verifier = verifier
+        self.max_iters = max_iters
+
+    def run(self, plan, tool_calls):
+        results = []
+
+        for step in tool_calls[:self.max_iters]:
+            result = self.executor.execute(
+                step["tool"],
+                step["args"]
+            )
+            results.append(result)
+
+            if self.verifier.verify(plan.task, result):
+                break
+
+        return results
+🧠 core/planner.py (UPDATED)
+
+Add tool planning.
+
+class Plan(BaseModel):
+    task: str
+    reasoning_required: bool
+    coding_required: bool
+    tool_calls: list[dict]   # 👈 NEW
+    output_style: str
+Planner prompt addition
+If tools are required, output tool_calls as a list:
+[
+  {
+    "tool": "read_file",
+    "args": {"path": "main.py"}
+  }
+]
+
+Planner never executes tools, only plans them.
+
+🔀 core/router.py (UPDATED)
+class TaskRouter:
+    def __init__(self, reasoning, coder, agent_loop):
+        self.reasoning = reasoning
+        self.coder = coder
+        self.agent_loop = agent_loop
+
+    def execute(self, plan, user_input):
+        outputs = {}
+
+        if plan.reasoning_required:
+            outputs["reasoning"] = self.reasoning.run(user_input)
+
+        if plan.coding_required:
+            outputs["code"] = self.coder.run(user_input)
+
+        if plan.tool_calls:
+            outputs["tools"] = self.agent_loop.run(
+                plan,
+                plan.tool_calls
+            )
+
+        return outputs
+🚀 main.py (NEW TOOL SETUP)
+from tools.registry import ToolRegistry
+from tools.file_tools import read_file, write_file
+from tools.shell_tools import run_shell
+from tools.python_tools import run_python
+
+from agents.executor import ExecutionAgent
+from agents.verifier import VerificationAgent
+from agents.loop import AgentLoop
+
+tools = ToolRegistry()
+tools.register("read_file", read_file, "Read a file")
+tools.register("write_file", write_file, "Write a file")
+tools.register("run_shell", run_shell, "Run safe shell command")
+tools.register("run_python", run_python, "Execute Python")
+
+executor = ExecutionAgent(tools)
+verifier = VerificationAgent()
+agent_loop = AgentLoop(executor, verifier)

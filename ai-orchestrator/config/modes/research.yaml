@@ -1,0 +1,9 @@
+mode: research
+tool_access:
+  - read_file
+  - write_file
+  - run_shell
+  - run_python
+autonomous: true
+max_iterations: 12
+requires_confirmation: true

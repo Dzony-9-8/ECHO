@@ -1,0 +1,152 @@
+🧩 PHASE 3A — CODE SPECIALIST (DeepSeek-Coder)
+🎯 Goal of this phase
+
+Add a Code Model that:
+
+Writes, refactors, debugs code
+
+Never chats with the user
+
+Never applies persona
+
+Never reasons about non-code tasks
+
+The Planner decides when to use it.
+
+🧠 Updated Mental Model (important)
+Component	Responsibility
+Planner	Decide what kind of task this is
+DeepSeek-R1	Abstract / logical reasoning
+DeepSeek-Coder	Code generation & editing
+Synthesizer	Merge outputs into final answer
+Persona	Applied ONLY at final output
+📁 STRUCTURE CHANGES
+ai-orchestrator/
+├── models/
+│   ├── deepseek_r1.py
+│   └── deepseek_coder.py   👈 NEW
+├── core/
+│   ├── router.py           👈 UPDATED
+│   └── planner.py          👈 UPDATED
+🧠 models/deepseek_coder.py
+
+Pure code engine
+
+class DeepSeekCoder:
+    def __init__(self, model):
+        self.model = model
+
+    def run(self, task: str) -> str:
+        prompt = f"""
+You are a professional software engineer.
+
+Rules:
+- Output ONLY code or technical explanations
+- NO conversation
+- NO persona
+- NO emojis
+- Be correct and explicit
+
+Task:
+{task}
+"""
+        res = self.model(prompt, max_tokens=1024)
+        return res["choices"][0]["text"].strip()
+🧠 core/planner.py (UPDATED)
+
+We add task classification.
+
+class Plan(BaseModel):
+    task: str
+    reasoning_required: bool
+    coding_required: bool     # 👈 NEW
+    models: list[str]
+    output_style: str
+Planner logic update
+def plan(self, user_input, short_memory, long_memory_hits):
+    prompt = f"""
+You are a central AI planner.
+
+{self.persona.apply()}
+
+Recent conversation:
+{short_memory}
+
+Relevant past memory:
+{long_memory_hits}
+
+User request:
+{user_input}
+
+Decide what is needed.
+
+Output ONLY valid JSON:
+{{
+  "task": "...",
+  "reasoning_required": true/false,
+  "coding_required": true/false,
+  "models": ["deepseek_r1", "deepseek_coder"],
+  "output_style": "concise|normal|detailed"
+}}
+"""
+
+Rules the planner implicitly follows:
+
+coding_required = true → user expects code
+
+reasoning_required = true → logic / explanation / planning
+
+Both can be true
+
+🔀 core/router.py (UPDATED)
+
+Now supports multiple specialists.
+
+class TaskRouter:
+    def __init__(self, reasoning_model, coder_model):
+        self.reasoning = reasoning_model
+        self.coder = coder_model
+
+    def execute(self, plan, user_input):
+        outputs = {}
+
+        if plan.reasoning_required:
+            outputs["reasoning"] = self.reasoning.run(user_input)
+
+        if plan.coding_required:
+            outputs["code"] = self.coder.run(user_input)
+
+        return outputs
+🚀 main.py (UPDATED PARTS ONLY)
+Load coder model
+coder_llm = load("models/deepseek-coder-6.7b.gguf")
+Initialize coder
+from models.deepseek_coder import DeepSeekCoder
+
+coder = DeepSeekCoder(coder_llm)
+router = TaskRouter(reasoning, coder)
+
+Everything else remains unchanged.
+
+🧪 Example Flow (what now happens)
+
+User:
+
+Write a FastAPI endpoint for user login
+
+Planner output:
+
+{
+  "reasoning_required": false,
+  "coding_required": true,
+  "models": ["deepseek_coder"],
+  "output_style": "detailed"
+}
+
+Execution:
+
+❌ Reasoning skipped
+
+✅ Code model generates clean code
+
+🧠 Synthesizer applies persona and formats response

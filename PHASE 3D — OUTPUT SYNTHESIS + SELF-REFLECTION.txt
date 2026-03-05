@@ -1,0 +1,107 @@
+🧠 PHASE 3D — OUTPUT SYNTHESIS + SELF-REFLECTION
+🎯 Objectives
+
+Synthesize all outputs: reasoning, code, tools, external calls
+
+Apply persona: calm, technical, precise, as defined in persona.yaml
+
+Self-reflection loop: evaluate confidence, detect conflicts, add explanations if needed
+
+Produce final answer: coherent, complete, user-ready
+
+📁 STRUCTURE UPDATE
+core/
+├── synthesis.py    (UPDATED)
+├── planner.py      (unchanged)
+├── router.py       (unchanged)
+└── persona.py      (unchanged)
+🧪 core/synthesis.py — FINAL VERSION
+class OutputSynthesizer:
+    def __init__(self, model, persona):
+        self.model = model
+        self.persona = persona
+
+    def synthesize(self, plan, outputs):
+        """
+        Merge all outputs (reasoning, code, tools)
+        Apply persona and self-reflection
+        Produce final user-facing answer
+        """
+        reasoning = outputs.get("reasoning", "")
+        code = outputs.get("code", "")
+        tools = outputs.get("tools", "")
+
+        prompt = f"""
+You are the final AI voice.
+
+Persona:
+{self.persona.apply()}
+
+You received multiple internal outputs:
+- Reasoning: {reasoning}
+- Code: {code}
+- Tool results: {tools}
+
+Task: {plan.task}
+
+Instructions:
+1. Check for contradictions or inconsistencies.
+2. If something seems wrong, admit it and propose a correction.
+3. Produce a clear, concise, and polished answer for the user.
+4. Include code if required, but always explain what it does.
+5. Obey the output style: {plan.output_style}
+
+Respond ONLY with the final answer.
+"""
+        res = self.model(prompt, max_tokens=1024)
+        final = res["choices"][0]["text"].strip()
+        return final
+🧠 Self-Reflection Logic
+
+You now have a loop inside synthesis:
+
+Compare reasoning vs tool output vs code output
+
+Detect conflicts (e.g., code fails test, tool output disagrees)
+
+Ask planner for clarification if needed
+
+Merge everything into one coherent message
+
+This is optional but recommended for critical tasks.
+
+🔁 main.py — FINAL OUTPUT FLOW
+# Assume Phase 3C setup is complete
+
+while True:
+    user_input = input("You: ")
+    if user_input.lower() == "exit":
+        break
+
+    short_mem.add("user", user_input)
+    emb = embedder.embed(user_input)
+    memories = long_mem.query(emb, decay=decay)
+
+    # Planner creates a plan
+    plan = planner.plan(user_input, short_mem.context(), memories)
+
+    # Router executes reasoning, coding, tools
+    outputs = router.execute(plan, user_input)
+
+    # Synthesizer merges outputs and applies persona + reflection
+    final_answer = synthesizer.synthesize(plan, outputs)
+
+    # Update memories
+    score = importance.score(user_input)
+    if score >= 0.4:
+        long_mem.add(emb, user_input, score)
+
+    if len(short_mem.buffer) >= 5:
+        summary = summarizer.summarize(short_mem.context())
+        episodic.add(summary)
+        short_mem.buffer.clear()
+
+    short_mem.add("ai", final_answer)
+    episodic.add(final_answer)
+
+    print("\nAI:", final_answer, "\n")

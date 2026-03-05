@@ -1,0 +1,322 @@
+LOCAL MULTI-MODEL AI ORCHESTRATION PLATFORM
+
+(Offline, Modular, Specialist-Based Intelligence)
+
+🔒 CORE DIRECTIVE (READ FIRST)
+
+You are building a fully local, offline AI orchestration system that behaves as one unified intelligence while internally using multiple specialized AI models.
+
+🚫 You must NOT attempt to merge model weights.
+🚫 You must NOT rely on cloud APIs.
+🚫 You must NOT create a monolithic LLM.
+
+✅ You must implement model orchestration, central planning, shared memory, unified persona, and output synthesis.
+
+This system must feel like one AI to the user.
+
+🧩 HIGH-LEVEL ARCHITECTURE
+
+The system consists of six mandatory subsystems:
+
+Central Planner (AI Brain)
+
+Task Router (Deterministic Code)
+
+Specialist Models (Experts)
+
+Shared Conversation Memory
+
+Unified Persona System
+
+Output Synthesis Layer
+
+All subsystems must be modular, replaceable, and local-only.
+
+🧠 1. CENTRAL PLANNER (THE BRAIN)
+Purpose
+
+The Central Planner does not solve tasks directly unless trivial.
+It decides:
+
+What the user wants
+
+Whether reasoning is required
+
+Which specialist models to call
+
+The execution order
+
+How results should be merged
+
+Model
+
+Use Meta LLaMA 3.1 8B (quantized, GGUF)
+
+Rules
+
+Planner outputs structured JSON only
+
+Planner never produces final user-facing answers
+
+Planner must remain stable and predictable
+
+Mandatory Planner Prompt (System-Level)
+You are a central AI planner.
+You do not solve tasks directly unless trivial.
+Your role is to:
+- interpret user intent
+- decompose tasks into steps
+- select appropriate specialist models
+- control execution order
+- preserve a unified personality and memory
+
+You must output structured JSON decisions only.
+🔀 2. TASK ROUTER (CODE, NOT AI)
+Purpose
+
+The Task Router is pure code logic that executes planner decisions.
+
+Responsibilities
+
+Parse planner JSON
+
+Call specialist models
+
+Handle parallel or sequential execution
+
+Manage failures and fallbacks
+
+Return results to the synthesis layer
+
+Rules
+
+No AI logic here
+
+No interpretation
+
+Deterministic behavior only
+
+🧠 3. SPECIALIST MODELS (EXPERTS)
+
+Specialist models never talk directly to the user.
+
+Reasoning Engine
+
+DeepSeek R1
+
+Use ONLY for:
+
+Math
+
+Logic
+
+Proofs
+
+Long reasoning chains
+
+Planning substeps
+
+Coding Engine
+
+DeepSeek Coder V2
+
+Use ONLY for:
+
+Code generation
+
+Refactoring
+
+Debugging
+
+Architecture implementation
+
+Vision Engine
+
+LLaVA 1.6
+
+Use ONLY when:
+
+Images are present
+
+OCR is needed
+
+Visual reasoning is required
+
+Speech Engines
+
+OpenAI Whisper Large-v3 → Speech-to-Text
+
+Coqui XTTS-v2 → Text-to-Speech
+
+Image Generation
+
+Stability AI Stable Diffusion XL
+
+Black Forest Labs FLUX
+
+🧠 4. SHARED CONVERSATION MEMORY
+Memory Layers (MANDATORY)
+Short-Term Memory (Session)
+
+Recent messages
+
+Planner state
+
+Active goals
+Stored in RAM
+
+Long-Term Memory (Persistent)
+
+User preferences
+
+Past decisions
+
+Learned facts
+
+Project history
+
+Storage:
+
+Vector DB (FAISS)
+
+Metadata DB (SQLite)
+
+Embeddings:
+
+BAAI BGE-Large
+
+Episodic Memory
+
+Summarized past interactions
+
+Indexed and retrievable
+
+Used to prevent token overflow
+
+🎭 5. UNIFIED PERSONA SYSTEM
+
+All models must behave as one personality.
+
+Persona Definition (Single Source of Truth)
+tone: calm, technical, precise
+verbosity: adaptive
+values:
+  - correctness
+  - clarity
+  - honesty
+rules:
+  - never contradict past answers without explanation
+  - ask clarifying questions only when necessary
+  - explain reasoning when beneficial
+Enforcement
+
+Inject persona into every model prompt
+
+Output synthesis must enforce persona consistency
+
+🧪 6. OUTPUT SYNTHESIS (FINAL VOICE)
+Purpose
+
+Merge all specialist outputs into one coherent response.
+
+Process
+
+Collect model outputs
+
+Normalize formats
+
+Resolve conflicts
+
+Enforce persona
+
+Produce final answer
+
+Model Used
+
+Central Planner model (LLaMA 3.1 8B)
+
+⚠️ This is the ONLY component that talks to the user.
+
+🏗️ PROJECT STRUCTURE (MANDATORY)
+ai-orchestrator/
+├── planner/
+│   └── planner_llama.py
+├── router/
+│   └── task_router.py
+├── models/
+│   ├── deepseek_r1.py
+│   ├── deepseek_coder.py
+│   ├── llava.py
+│   ├── whisper.py
+│   ├── xtts.py
+│   ├── sdxl.py
+│   └── flux.py
+├── memory/
+│   ├── short_term.py
+│   ├── long_term.py
+│   ├── episodic.py
+│   └── embeddings.py
+├── persona/
+│   └── persona.yaml
+├── synthesis/
+│   └── output_merger.py
+├── ui/
+│   └── chat_ui.py
+└── main.py
+🧠 OPERATING PRINCIPLES (NON-NEGOTIABLE)
+
+Planner decides → Router executes → Specialists work → Synthesizer responds
+
+No specialist talks directly to the user
+
+Memory is always consulted
+
+Persona is always enforced
+
+System must remain offline-capable
+
+All components must be swappable
+
+🚀 DEVELOPMENT PHASES (EXECUTE IN ORDER)
+Phase 1 – Foundation
+
+Central Planner
+
+Task Router
+
+One Specialist (DeepSeek-R1)
+
+Basic Chat UI
+
+Phase 2 – Intelligence
+
+Shared Memory (FAISS + SQLite)
+
+Persona System
+
+Output Synthesis
+
+Phase 3 – Multimodal
+
+Coding
+
+Vision
+
+Voice
+
+Image Generation
+
+🛑 ABSOLUTE PROHIBITIONS
+
+🚫 Do not attempt to train or merge foundation models
+🚫 Do not introduce cloud dependencies
+🚫 Do not bypass planner logic
+🚫 Do not let specialists respond directly
+
+🎯 FINAL GOAL
+
+The end result must feel like:
+
+One intelligent, coherent, persistent AI system
+Built from specialized expert models
+Running fully offline on consumer hardware

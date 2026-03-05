@@ -1,0 +1,304 @@
+🧠 PHASE 2 — MEMORY-FIRST ARCHITECTURE
+🔁 What changes conceptually
+
+Phase 1 problem (by design):
+
+Planner is stateless
+
+No memory
+
+Output = raw specialist output
+
+Phase 2 solution:
+
+Memory is consulted before planning
+
+Memory is updated after responses
+
+Planner becomes context-aware
+
+Output is synthesized with persona + memory
+
+📁 NEW PROJECT STRUCTURE (REPLACE OLD ONE)
+ai-orchestrator/
+├── main.py
+├── core/
+│   ├── planner.py
+│   ├── router.py
+│   ├── synthesis.py
+│   └── persona.py
+├── memory/
+│   ├── short_term.py
+│   ├── long_term.py
+│   ├── episodic.py
+│   └── embeddings.py
+├── models/
+│   └── deepseek_r1.py
+├── config/
+│   └── persona.yaml
+└── requirements.txt
+📦 requirements.txt (updated)
+llama-cpp-python
+pydantic
+faiss-cpu
+sentence-transformers
+pyyaml
+🎭 config/persona.yaml
+
+Single source of truth
+
+tone: calm, technical, precise
+verbosity: adaptive
+values:
+  - correctness
+  - clarity
+  - honesty
+rules:
+  - never contradict previous answers without explanation
+  - explain reasoning when it adds value
+  - ask clarifying questions only when necessary
+🧠 memory/short_term.py
+
+Session memory (RAM only)
+
+class ShortTermMemory:
+    def __init__(self, max_turns=10):
+        self.max_turns = max_turns
+        self.buffer = []
+
+    def add(self, role, content):
+        self.buffer.append((role, content))
+        if len(self.buffer) > self.max_turns:
+            self.buffer.pop(0)
+
+    def context(self) -> str:
+        return "\n".join(f"{r}: {c}" for r, c in self.buffer)
+🧠 memory/embeddings.py
+
+Embedding engine (local)
+
+from sentence_transformers import SentenceTransformer
+
+class EmbeddingModel:
+    def __init__(self):
+        self.model = SentenceTransformer("BAAI/bge-large-en")
+
+    def embed(self, text: str):
+        return self.model.encode([text])[0]
+🧠 memory/long_term.py
+
+Persistent semantic memory
+
+import faiss
+import numpy as np
+
+class LongTermMemory:
+    def __init__(self, dim=1024):
+        self.index = faiss.IndexFlatL2(dim)
+        self.data = []
+
+    def add(self, embedding, text):
+        self.index.add(np.array([embedding]))
+        self.data.append(text)
+
+    def query(self, embedding, k=3):
+        if self.index.ntotal == 0:
+            return []
+        _, ids = self.index.search(np.array([embedding]), k)
+        return [self.data[i] for i in ids[0]]
+🧠 memory/episodic.py
+
+Conversation summaries
+
+class EpisodicMemory:
+    def __init__(self):
+        self.episodes = []
+
+    def add(self, summary: str):
+        self.episodes.append(summary)
+
+    def recent(self, n=5):
+        return self.episodes[-n:]
+🎭 core/persona.py
+
+Persona injector
+
+import yaml
+
+class Persona:
+    def __init__(self, path="config/persona.yaml"):
+        with open(path, "r") as f:
+            self.data = yaml.safe_load(f)
+
+    def apply(self) -> str:
+        return f"""
+Persona:
+Tone: {self.data['tone']}
+Verbosity: {self.data['verbosity']}
+Rules:
+- " + "\n- ".join(self.data['rules'])
+"""
+🧠 core/planner.py
+
+Planner WITH memory
+
+import json
+from pydantic import BaseModel
+
+class Plan(BaseModel):
+    task: str
+    reasoning_required: bool
+    models: list[str]
+    output_style: str
+
+
+class Planner:
+    def __init__(self, model, persona):
+        self.model = model
+        self.persona = persona
+
+    def plan(self, user_input, short_memory, long_memory_hits):
+        prompt = f"""
+You are a central AI planner.
+
+{self.persona.apply()}
+
+Recent conversation:
+{short_memory}
+
+Relevant past memory:
+{long_memory_hits}
+
+User request:
+{user_input}
+
+Output ONLY valid JSON:
+{{
+  "task": "...",
+  "reasoning_required": true/false,
+  "models": ["deepseek_r1"],
+  "output_style": "concise|normal|detailed"
+}}
+"""
+        raw = self.model(prompt, max_tokens=256)
+        text = raw["choices"][0]["text"]
+        return Plan(**json.loads(text))
+🧠 models/deepseek_r1.py
+
+(unchanged, but now never sees persona or memory)
+
+class DeepSeekR1:
+    def __init__(self, model):
+        self.model = model
+
+    def run(self, task):
+        prompt = f"""
+You are a reasoning engine.
+Solve step by step.
+Do NOT address the user.
+
+Task:
+{task}
+"""
+        res = self.model(prompt, max_tokens=512)
+        return res["choices"][0]["text"].strip()
+🔀 core/router.py
+
+Memory-aware execution
+
+class TaskRouter:
+    def __init__(self, reasoning_model):
+        self.reasoning = reasoning_model
+
+    def execute(self, plan, user_input):
+        outputs = {}
+
+        if plan.reasoning_required:
+            outputs["reasoning"] = self.reasoning.run(user_input)
+
+        return outputs
+🧪 core/synthesis.py
+
+Unified final voice
+
+class OutputSynthesizer:
+    def __init__(self, model, persona):
+        self.model = model
+        self.persona = persona
+
+    def synthesize(self, plan, outputs):
+        prompt = f"""
+You are the final voice of the AI.
+
+{self.persona.apply()}
+
+Internal results:
+{outputs}
+
+Produce a final user-facing answer.
+"""
+        res = self.model(prompt, max_tokens=512)
+        return res["choices"][0]["text"].strip()
+🚀 main.py
+
+Memory-first orchestration loop
+
+from llama_cpp import Llama
+
+from core.planner import Planner
+from core.router import TaskRouter
+from core.synthesis import OutputSynthesizer
+from core.persona import Persona
+
+from memory.short_term import ShortTermMemory
+from memory.long_term import LongTermMemory
+from memory.episodic import EpisodicMemory
+from memory.embeddings import EmbeddingModel
+
+from models.deepseek_r1 import DeepSeekR1
+
+
+def load(path):
+    return Llama(model_path=path, n_ctx=4096, n_gpu_layers=20)
+
+
+def main():
+    planner_llm = load("models/llama-3.1-8b.gguf")
+    reasoning_llm = load("models/deepseek-r1.gguf")
+
+    persona = Persona()
+
+    planner = Planner(planner_llm, persona)
+    synthesizer = OutputSynthesizer(planner_llm, persona)
+    reasoning = DeepSeekR1(reasoning_llm)
+    router = TaskRouter(reasoning)
+
+    short_mem = ShortTermMemory()
+    embedder = EmbeddingModel()
+    long_mem = LongTermMemory()
+    episodic = EpisodicMemory()
+
+    print("Local AI Orchestrator (Phase 2)")
+
+    while True:
+        user = input("You: ")
+        if user == "exit":
+            break
+
+        short_mem.add("user", user)
+        emb = embedder.embed(user)
+        memories = long_mem.query(emb)
+
+        plan = planner.plan(user, short_mem.context(), memories)
+        outputs = router.execute(plan, user)
+        final = synthesizer.synthesize(plan, outputs)
+
+        short_mem.add("ai", final)
+        long_mem.add(emb, user)
+        episodic.add(final)
+
+        print("\nAI:", final, "\n")
+
+
+if __name__ == "__main__":
+    main()

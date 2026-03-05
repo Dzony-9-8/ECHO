@@ -1,0 +1,6 @@
+llama-cpp-python
+pydantic
+faiss-cpu
+sentence-transformers
+pyyaml
+numpy
