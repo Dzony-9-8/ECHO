@@ -95,22 +95,34 @@ class AgentManager:
             
             if decision == "finalize":
                 self._write_memory(payload, success=True)
-                yield {"agent": "system", "type": "status", "content": "Task finalized successfully."}
+                yield {"agent": "system", "type": "status", "content": "Gathering final results..."}
+                # Use 'system' to ensure the final consolidated response is ALWAYS visible
+                yield {"agent": "system", "type": "payload", "data": payload.to_dict()}
+                yield {"agent": "system", "type": "status", "content": "Analysis complete."}
                 return
             
             if decision == "escalate":
                 payload.metadata["escalated"] = True
                 self._write_memory(payload, success=True, tags=["escalated"])
-                yield {"agent": "system", "type": "status", "content": "Escalating task to heavy model."}
+                yield {"agent": "system", "type": "status", "content": "Escalating results..."}
+                yield {"agent": "system", "type": "payload", "data": payload.to_dict()}
+                yield {"agent": "system", "type": "status", "content": "Escalation complete."}
                 return
 
             if decision == "stop":
                 self._write_memory(payload, success=False, failure_type="max_iterations")
-                yield {"agent": "system", "type": "status", "content": "Task stopped (max iterations)."}
+                yield {"agent": "system", "type": "status", "content": "Stopping iteration loop..."}
+                yield {"agent": "system", "type": "payload", "data": payload.to_dict()}
+                yield {"agent": "system", "type": "status", "content": "Task concluded."}
                 return
 
-            yield {"agent": "supervisor", "type": "status", "content": f"Revision requested by critic. Restarting task with feedback."}
+            yield {"agent": "supervisor", "type": "status", "content": "Revision requested by critic. Restarting task with feedback."}
             objective = f"REVISION REQUESTED: {critique.analysis}\nOriginal Objective: {objective}"
+
+        # If loop finishes without return (exhausted max_iterations)
+        yield {"agent": "system", "type": "status", "content": "Maximum processing steps reached. Consoliding best results..."}
+        yield {"agent": "system", "type": "payload", "data": payload.to_dict()}
+        yield {"agent": "system", "type": "status", "content": "Analysis complete."}
 
     def _write_memory(self, payload: UACPPayload, success: bool, failure_type=None, tags=None):
         """Writes compressed intelligence to shared memory."""
@@ -124,4 +136,4 @@ class AgentManager:
             tags=tags or []
         )
         self.memory.record_agent_memory(intel.to_dict())
-        print(f"--- AgentManager: Memory Written: {intel.agent_used} (Success: {success}) ---")
+        print("--- AgentManager: Memory Written ---")

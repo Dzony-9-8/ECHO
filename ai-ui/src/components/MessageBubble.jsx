@@ -14,13 +14,13 @@ export default function MessageBubble({ role, content, onSave, onExportAction, a
     const contentRef = useRef(null);
 
     // TRY TO PARSE JSON CONTENT (For structured agent outputs)
-    let displayContent = content;
+    let displayContent = content ?? ""; // Safety guard against undefined content
     let structuredData = null;
 
-    if (role === 'assistant' && agent && content.startsWith('{') && content.endsWith('}')) {
+    if (role === 'assistant' && agent && displayContent.startsWith('{') && displayContent.endsWith('}')) {
         try {
-            structuredData = JSON.parse(content);
-            displayContent = structuredData.output || structuredData.analysis || content;
+            structuredData = JSON.parse(displayContent);
+            displayContent = structuredData.output || structuredData.analysis || displayContent;
         } catch {
             // Not valid JSON, fallback to raw
         }

@@ -220,9 +220,14 @@ export default function Chat() {
         setLoading(true);
 
         // Update UI immediately
-        const userMsgObj = { role: "user", content: finalMessage, images: imagesToSend };
+        const userMsgObj = {
+            id: `user-${Date.now()}`,
+            role: "user",
+            content: finalMessage,
+            images: imagesToSend
+        };
         const currentHistory = [...messages, userMsgObj];
-        setMessages([...currentHistory, { role: "assistant", content: "" }]);
+        setMessages(currentHistory); // Don't add a blank assistant entry — the stream placeholder handles this
 
         if (!overrideText) {
             setInput("");
@@ -232,11 +237,14 @@ export default function Chat() {
         try {
             // DEEP RESEARCH PATH — only available in Electron mode
             if (deepResearchMode && window.electronAPI) {
-                setMessages(prev => {
-                    const updated = [...prev];
-                    updated[updated.length - 1].content = "🔬 *Starting Deep Research Agent... This may take a moment.*";
-                    return updated;
-                });
+                const drPlaceholderId = `dr-${Date.now()}`;
+                setMessages(prev => [...prev, {
+                    id: drPlaceholderId,
+                    role: "assistant",
+                    agent: "system",
+                    content: "🔬 *Starting Deep Research Agent... This may take a moment.*",
+                    isStatus: true
+                }]);
 
                 const result = await window.electronAPI.runDeepResearch({
                     query: finalMessage,
@@ -250,11 +258,10 @@ export default function Chat() {
                     const logStr = log.map(l => `[${l.step}] ${l.message}`).join("\n");
                     const fullOutput = `${report}\n\n<details><summary>Research Log</summary>\n\n\`\`\`text\n${logStr}\n\`\`\`\n</details>`;
 
-                    setMessages(prev => {
-                        const updated = [...prev];
-                        updated[updated.length - 1].content = fullOutput;
-                        return updated;
-                    });
+                    setMessages(prev => prev.map(m => m.id === drPlaceholderId
+                        ? { ...m, content: fullOutput, isStatus: false }
+                        : m
+                    ));
                 } else {
                     throw new Error(result.message || "Deep Research Failed");
                 }
@@ -271,8 +278,15 @@ export default function Chat() {
             if (weatherEnabled) tags.push("weather");
             if (deepResearchMode) tags.push("deep_research");
 
-            // We will keep track of the stream status message index
-            let statusIndex = currentHistory.length; // The index of the placeholder we just added
+            // Add a unique placeholder for the current stream's status
+            const placeholderId = `status-${Date.now()}`;
+            setMessages(prev => [...prev, {
+                id: placeholderId,
+                role: "assistant",
+                agent: "system",
+                content: "*Contacting swarm...*",
+                isStatus: true
+            }]);
 
             await sendChatStream({
                 message: finalMessage,
@@ -281,21 +295,21 @@ export default function Chat() {
                 onChunk: (chunk) => {
                     setMessages((prev) => {
                         const updated = [...prev];
+                        const sIdx = updated.findIndex(m => m.id === placeholderId);
+
+                        if (sIdx === -1) return prev; // Safety
 
                         if (chunk.type === "status") {
-                            // Update the status placeholder
-                            updated[statusIndex] = {
-                                role: "assistant",
+                            updated[sIdx] = {
+                                ...updated[sIdx],
                                 agent: chunk.agent || "system",
-                                content: `*${chunk.content}*`,
-                                isStatus: true
+                                content: `*${chunk.content}*`
                             };
                         } else if (chunk.type === "payload" || chunk.type === "tool_output") {
-                            // A specialist has finished, push their actual bubble
                             const data = chunk.data || {};
-                            // Insert the actual payload BEFORE the status placeholder
-                            // so the status stays at the bottom while thinking continues
-                            updated.splice(statusIndex, 0, {
+                            // Insert payload BEFORE the status placeholder
+                            updated.splice(sIdx, 0, {
+                                id: `payload-${Date.now()}-${Math.random()}`,
                                 role: "assistant",
                                 agent: chunk.agent || "system",
                                 content: data.output || JSON.stringify(data),
@@ -303,30 +317,20 @@ export default function Chat() {
                                 citations: data.citations,
                                 requiresRevision: data.requires_revision
                             });
-                            // The status placeholder shifts down, so increment its index known to us
-                            statusIndex++;
                         } else if (chunk.type === "error") {
-                            updated[statusIndex] = {
-                                role: "assistant",
-                                agent: "system",
+                            updated[sIdx] = {
+                                ...updated[sIdx],
                                 content: `[ERROR]: ${chunk.content}`,
                                 isStatus: false
                             };
                         }
-
                         return updated;
                     });
                 }
             });
 
-            // Once the stream finishes successfully, remove the status placeholder
-            setMessages((prev) => {
-                const updated = [...prev];
-                if (updated[statusIndex] && updated[statusIndex].isStatus) {
-                    updated.splice(statusIndex, 1);
-                }
-                return updated;
-            });
+            // Cleanup placeholder if it's still a status (remove "Gathering results..." but keep errors)
+            setMessages(prev => prev.filter(m => m.id !== placeholderId || !m.isStatus));
 
             setLoading(false);
             isSending.current = false;
@@ -342,11 +346,9 @@ export default function Chat() {
         }
     };
 
-    const handleEdit = (index, newContent) => {
+    const handleEdit = (msgId, newContent) => {
         setMessages(prev => {
-            const updated = [...prev];
-            updated[index] = { ...updated[index], content: newContent };
-            return updated;
+            return prev.map(m => m.id === msgId ? { ...m, content: newContent } : m);
         });
     };
 
@@ -390,14 +392,15 @@ export default function Chat() {
                 />
             )}
 
-            <div className="messages">
-                {/* AGENT FILTER BAR */}
-                <div className="agent-toggle-bar" style={{
-                    display: 'flex', gap: '12px', padding: '10px 20px',
-                    background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #333',
-                    alignItems: 'center', justifyContent: 'center', position: 'sticky', top: 0, zIndex: 5
-                }}>
-                    <span style={{ fontSize: '0.75rem', color: '#888', textTransform: 'uppercase', letterSpacing: '1px' }}>Filter Swarm:</span>
+            <div className="agent-toggle-bar" style={{
+                display: 'flex', gap: '10px', padding: '12px 20px',
+                background: 'rgba(15, 15, 15, 0.95)', borderBottom: '1px solid #333',
+                alignItems: 'center', justifyContent: 'flex-start',
+                flexWrap: 'wrap', backdropFilter: 'blur(10px)', boxSizing: 'border-box', width: '100%',
+                flexShrink: 0, zIndex: 100, overflow: 'hidden'
+            }}>
+                <span style={{ fontSize: '0.7rem', color: '#888', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', whiteSpace: 'nowrap', marginRight: '6px', flexShrink: 0 }}>Filter Swarm:</span>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', flex: '1 1 auto' }}>
                     {agents.map(agent => (
                         <button
                             key={agent.id}
@@ -405,11 +408,12 @@ export default function Chat() {
                             className={`agent-toggle-btn ${hiddenAgents.has(agent.id) ? 'hidden' : 'active'}`}
                             style={{
                                 display: 'flex', alignItems: 'center', gap: '6px',
-                                padding: '4px 10px', borderRadius: '20px', border: '1px solid',
+                                padding: '6px 12px', borderRadius: '20px', border: '1px solid',
                                 borderColor: hiddenAgents.has(agent.id) ? '#444' : agent.color,
                                 background: hiddenAgents.has(agent.id) ? 'transparent' : `${agent.color}15`,
                                 color: hiddenAgents.has(agent.id) ? '#666' : agent.color,
-                                cursor: 'pointer', transition: 'all 0.2s', fontSize: '0.81rem'
+                                cursor: 'pointer', transition: 'all 0.2s', fontSize: '0.81rem',
+                                whiteSpace: 'nowrap', flexShrink: 0
                             }}
                             title={`Toggle ${agent.name} visibility`}
                         >
@@ -418,17 +422,19 @@ export default function Chat() {
                         </button>
                     ))}
                 </div>
+            </div>
 
+            <div className="messages">
                 {messages.length === 0 && (
                     <div className="welcome-message">
                         <h2>How can ECHO help you today?</h2>
                     </div>
                 )}
-                {messages.filter(m => !m.agent || !hiddenAgents.has(m.agent)).map((msg, index) => (
+                {messages.filter(m => !m.agent || !hiddenAgents.has(m.agent)).map((msg) => (
                     <MessageBubble
-                        key={index}
+                        key={msg.id}
                         {...msg}
-                        onSave={(newVal) => handleEdit(index, newVal)}
+                        onSave={(newVal) => handleEdit(msg.id, newVal)}
                         onExportAction={handleExport}
                     />
                 ))}
@@ -613,19 +619,22 @@ export default function Chat() {
                 /* WEB CONTROLS */
                 .web-controls {
                     display: flex;
-                    gap: 4px;
-                    margin-right: 8px;
-                    align-items: center;
+                    gap: 8px;
+                    margin-right: 12px;
+                    alignItems: center;
                 }
                 .control-btn {
                     background: transparent;
-                    border: none;
+                    border: 1px solid rgba(255,255,255,0.1);
                     cursor: pointer;
-                    font-size: 1.2rem;
-                    padding: 4px;
-                    border-radius: 4px;
-                    opacity: 0.6;
+                    font-size: 1.1rem;
+                    padding: 5px 8px;
+                    border-radius: 6px;
+                    opacity: 0.7;
                     transition: all 0.2s;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
                 }
                 .control-btn:hover {
                     opacity: 1;
