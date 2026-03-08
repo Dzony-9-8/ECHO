@@ -267,6 +267,7 @@ const ChatView = () => {
     setMessages([...allBefore.filter(m => m.id !== "system-prompt"), assistantMsg]);
     setIsStreaming(true);
     setStreamStartTime(Date.now());
+    setAgentActive(assistantMsg.agent || "ECHO Cloud", content.slice(0, 60));
 
     let convId = activeConversationId;
     if (!convId) {
