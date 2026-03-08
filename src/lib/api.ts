@@ -55,6 +55,7 @@ export interface RealSystemMetrics {
     cores: number;
     threads: number;
     usage_percent: number;
+    temperature_c: number | null;
   };
   ram: {
     total_gb: number;

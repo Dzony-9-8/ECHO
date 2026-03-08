@@ -53,8 +53,26 @@ def system_metrics():
     Returns real-time system metrics in the RealSystemMetrics format
     expected by the ECHO frontend.
     """
-    cpu_freq = psutil.cpu_freq()
     vm = psutil.virtual_memory()
+
+    # CPU temperature
+    cpu_temp = None
+    try:
+        temps = psutil.sensors_temperatures()
+        if temps:
+            # Try common sensor names
+            for key in ("coretemp", "k10temp", "cpu_thermal", "cpu-thermal"):
+                if key in temps and temps[key]:
+                    cpu_temp = temps[key][0].current
+                    break
+            # Fallback: first available sensor
+            if cpu_temp is None:
+                for sensors in temps.values():
+                    if sensors:
+                        cpu_temp = sensors[0].current
+                        break
+    except (AttributeError, Exception):
+        pass  # sensors_temperatures not available on all platforms
 
     return {
         "cpu": {
@@ -62,6 +80,7 @@ def system_metrics():
             "cores": psutil.cpu_count(logical=False) or psutil.cpu_count(),
             "threads": psutil.cpu_count(logical=True),
             "usage_percent": psutil.cpu_percent(interval=0.1),
+            "temperature_c": round(cpu_temp, 1) if cpu_temp is not None else None,
         },
         "ram": {
             "total_gb": round(vm.total / (1024 ** 3), 1),

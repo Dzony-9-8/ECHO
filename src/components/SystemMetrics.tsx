@@ -229,6 +229,13 @@ const SystemMetrics = () => {
             </span>
           </span>
         )}
+        {/* CPU Temp in top bar when live */}
+        {cpuTemp !== null && (
+          <span className={`flex items-center gap-0.5 ${tempTextClass(cpuTemp)}`}>
+            <Thermometer className="w-3 h-3" />
+            {cpuTemp}°C
+          </span>
+        )}
         {/* GPU Temp in top bar when live */}
         {gpuTemp !== null && (
           <span className={`flex items-center gap-0.5 ${tempTextClass(gpuTemp)}`}>
