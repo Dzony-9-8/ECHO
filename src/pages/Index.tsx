@@ -34,7 +34,7 @@ const Index = () => {
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       <TopBar viewLabel={viewLabels[activeView]} />
-      <div className="flex-1 flex overflow-hidden">
+      <main className="flex-1 flex overflow-hidden">
         <AppSidebar activeView={activeView} onViewChange={setActiveView} />
         {activeView === "chat" && <ChatView />}
         {activeView === "workflow" && <WorkflowView />}
@@ -44,7 +44,7 @@ const Index = () => {
         {activeView === "analytics" && <AnalyticsDashboard />}
         {activeView === "prompts" && <PromptLibraryPanel onSelect={handlePromptSelect} />}
         {activeView === "rag" && <RAGPanel />}
-      </div>
+      </main>
     </div>
   );
 };
