@@ -353,6 +353,7 @@ const ChatView = () => {
       {/* Modals */}
       <ChatSettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
       <ExportDialog open={showExport} onClose={() => setShowExport(false)} messages={messages} />
+      <ShareDialog conversationId={activeConversationId} open={showShare} onClose={() => setShowShare(false)} />
 
       <div className="flex-1 flex flex-col relative">
         {/* Compact filter bar */}
