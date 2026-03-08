@@ -30,6 +30,7 @@ const Index = () => {
     analytics: "Usage Analytics",
     prompts: "Prompt Library",
     rag: "Knowledge Base",
+    skills: "Agent Skills",
   };
 
   const handlePromptSelect = (prompt: string) => {
