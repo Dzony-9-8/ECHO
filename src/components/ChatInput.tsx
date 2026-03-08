@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Mic, Paperclip, X, Image, FileText, Layers } from "lucide-react";
+import { Send, Mic, MicOff, Paperclip, X, Image, FileText, Layers } from "lucide-react";
 import {
   type FileAttachment,
   getFileType,

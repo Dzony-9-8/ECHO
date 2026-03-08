@@ -1,14 +1,21 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import AppSidebar, { type ViewType } from "@/components/AppSidebar";
 import TopBar from "@/components/TopBar";
 import ChatView from "@/components/ChatView";
-import WorkflowView from "@/components/WorkflowView";
-import MemoryView from "@/components/MemoryView";
-import TelemetryView from "@/components/TelemetryView";
-import ResearchView from "@/components/ResearchView";
-import AnalyticsDashboard from "@/components/AnalyticsDashboard";
-import PromptLibraryPanel from "@/components/PromptLibraryPanel";
-import RAGPanel from "@/components/RAGPanel";
+
+const WorkflowView = lazy(() => import("@/components/WorkflowView"));
+const MemoryView = lazy(() => import("@/components/MemoryView"));
+const TelemetryView = lazy(() => import("@/components/TelemetryView"));
+const ResearchView = lazy(() => import("@/components/ResearchView"));
+const AnalyticsDashboard = lazy(() => import("@/components/AnalyticsDashboard"));
+const PromptLibraryPanel = lazy(() => import("@/components/PromptLibraryPanel"));
+const RAGPanel = lazy(() => import("@/components/RAGPanel"));
+
+const LazyFallback = () => (
+  <div className="flex-1 flex items-center justify-center">
+    <span className="text-xs font-mono text-primary animate-pulse">Loading module...</span>
+  </div>
+);
 
 const Index = () => {
   const [activeView, setActiveView] = useState<ViewType>("chat");
@@ -24,10 +31,8 @@ const Index = () => {
     rag: "Knowledge Base",
   };
 
-  // For prompt library → navigate to chat with selected prompt
   const handlePromptSelect = (prompt: string) => {
     setActiveView("chat");
-    // The prompt will be picked up via a simple approach - store in sessionStorage
     sessionStorage.setItem("echo_pending_prompt", prompt);
   };
 
@@ -37,13 +42,15 @@ const Index = () => {
       <main className="flex-1 flex overflow-hidden">
         <AppSidebar activeView={activeView} onViewChange={setActiveView} />
         {activeView === "chat" && <ChatView />}
-        {activeView === "workflow" && <WorkflowView />}
-        {activeView === "memory" && <MemoryView />}
-        {activeView === "telemetry" && <TelemetryView />}
-        {activeView === "research" && <ResearchView />}
-        {activeView === "analytics" && <AnalyticsDashboard />}
-        {activeView === "prompts" && <PromptLibraryPanel onSelect={handlePromptSelect} />}
-        {activeView === "rag" && <RAGPanel />}
+        <Suspense fallback={<LazyFallback />}>
+          {activeView === "workflow" && <WorkflowView />}
+          {activeView === "memory" && <MemoryView />}
+          {activeView === "telemetry" && <TelemetryView />}
+          {activeView === "research" && <ResearchView />}
+          {activeView === "analytics" && <AnalyticsDashboard />}
+          {activeView === "prompts" && <PromptLibraryPanel onSelect={handlePromptSelect} />}
+          {activeView === "rag" && <RAGPanel />}
+        </Suspense>
       </main>
     </div>
   );
