@@ -1,6 +1,7 @@
 import { Terminal, Zap, Wifi, WifiOff } from "lucide-react";
 import { useState, useEffect } from "react";
 import { checkHealth } from "@/lib/api";
+import SystemMetrics from "./SystemMetrics";
 
 interface Props {
   viewLabel?: string;
