@@ -84,6 +84,21 @@ const ChatView = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Check for pending prompt from prompt library
+  useEffect(() => {
+    const pending = sessionStorage.getItem("echo_pending_prompt");
+    if (pending) {
+      sessionStorage.removeItem("echo_pending_prompt");
+      const textarea = document.querySelector<HTMLTextAreaElement>('textarea[placeholder*="Enter command"]');
+      if (textarea) {
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+        nativeInputValueSetter?.call(textarea, pending);
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.focus();
+      }
+    }
+  });
+
   // Save system prompt
   useEffect(() => {
     localStorage.setItem("echo_system_prompt", systemPrompt);
