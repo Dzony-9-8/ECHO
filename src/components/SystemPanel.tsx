@@ -38,7 +38,7 @@ const localAgents = [
 ];
 
 const cloudAgents = [
-  { name: "ECHO Cloud", icon: Cloud, model: "Gemini 3 Flash", color: "text-terminal-cyan" },
+  { name: "ECHO Cloud", icon: Cloud, model: "Multi-Model", color: "text-terminal-cyan" },
 ];
 
 const SystemPanel = () => {
