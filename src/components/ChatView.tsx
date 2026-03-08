@@ -428,6 +428,16 @@ const ChatView = () => {
           >
             <Settings className="w-3.5 h-3.5" />
           </button>
+          {/* Share */}
+          {activeConversationId && (
+            <button
+              onClick={() => setShowShare(true)}
+              className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+              title="Share conversation"
+            >
+              <Link2 className="w-3.5 h-3.5" />
+            </button>
+          )}
 
           {/* Export */}
           <button
