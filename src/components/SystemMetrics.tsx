@@ -178,6 +178,7 @@ const SystemMetrics = () => {
   const cpuName = realMetrics?.cpu.name || overrides.cpuName || null;
   const cpuCores = realMetrics?.cpu.threads || browserInfo.cpuCores;
   const cpuUsage = realMetrics?.cpu.usage_percent ?? null;
+  const cpuTemp = realMetrics?.cpu.temperature_c ?? null;
 
   const ramTotalGB = realMetrics?.ram.total_gb || overrides.ramTotalGB || browserInfo.deviceMemoryGB;
   const ramUsedGB = realMetrics?.ram.used_gb ?? null;
