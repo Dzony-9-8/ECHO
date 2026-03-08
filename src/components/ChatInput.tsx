@@ -277,12 +277,20 @@ const ChatInput = ({ onSend, disabled }: Props) => {
         >
           <Send className="w-4 h-4" />
         </button>
-        <button
-          className="p-2.5 rounded border border-terminal-cyan bg-terminal-cyan/10 text-terminal-cyan hover:bg-terminal-cyan/20 transition-colors opacity-50 cursor-not-allowed"
-          title="Voice input (requires backend)"
-        >
-          <Mic className="w-4 h-4" />
-        </button>
+        {speechSupported && (
+          <button
+            onClick={toggleVoice}
+            disabled={disabled}
+            className={`p-2.5 rounded border transition-colors ${
+              isListening
+                ? "border-terminal-red bg-terminal-red/20 text-terminal-red animate-pulse"
+                : "border-terminal-cyan bg-terminal-cyan/10 text-terminal-cyan hover:bg-terminal-cyan/20"
+            } disabled:opacity-30`}
+            title={isListening ? "Stop listening" : "Voice input"}
+          >
+            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </button>
+        )}
       </div>
     </div>
   );
