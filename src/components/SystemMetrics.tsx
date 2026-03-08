@@ -288,11 +288,15 @@ const SystemMetrics = () => {
           <div className="space-y-3">
             {/* CPU */}
             {cpuUsage !== null ? (
-              <UsageBar
-                percent={cpuUsage}
-                label={`CPU${cpuName ? ` · ${cpuName}` : ""}`}
-                detail={`${cpuCores} threads`}
-              />
+              <div>
+                <UsageBar
+                  percent={cpuUsage}
+                  label={`CPU${cpuName ? ` · ${cpuName}` : ""}`}
+                  detail={`${cpuCores} threads`}
+                  showTemp={cpuTemp !== null}
+                  tempC={cpuTemp}
+                />
+              </div>
             ) : (
               <div>
                 <div className="flex justify-between text-[10px] font-mono mb-1">
