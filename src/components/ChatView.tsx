@@ -6,6 +6,8 @@ import { type ChatMessage as ChatMessageType, sendMessage, getBackendMode } from
 import { type FileAttachment } from "@/lib/files";
 import { useConversations } from "@/hooks/useConversations";
 import ConversationList from "@/components/ConversationList";
+import { AVAILABLE_MODELS } from "@/components/ModelSelector";
+import { toast } from "sonner";
 
 const WELCOME_MSG: ChatMessageType = {
   id: "welcome",
@@ -21,6 +23,7 @@ const ChatView = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [showPanel, setShowPanel] = useState(true);
   const [showHistory, setShowHistory] = useState(true);
+  const [selectedModel, setSelectedModel] = useState("google/gemini-3-flash-preview");
   const [activeAgents, setActiveAgents] = useState<Set<string>>(
     new Set(["Supervisor", "Developer", "Researcher", "Critic"])
   );
@@ -36,7 +39,6 @@ const ChatView = () => {
     saveMessage,
   } = useConversations();
 
-  // Load messages when switching conversations
   const handleSelectConversation = useCallback(async (id: string) => {
     setActiveConversationId(id);
     const msgs = await loadMessages(id);
@@ -65,12 +67,24 @@ const ChatView = () => {
     (m) => !m.agent || m.agent === "System" || activeAgents.has(m.agent)
   );
 
-  const handleSend = async (content: string, attachments?: FileAttachment[], depth?: number) => {
+  const getModelLabel = () => {
+    const model = AVAILABLE_MODELS.find((m) => m.id === selectedModel);
+    return model?.label || "Gemini 3 Flash";
+  };
+
+  const doSend = async (content: string, attachments?: FileAttachment[], depth?: number, editFromId?: string) => {
     const filesMeta = attachments?.map((f) => ({
       name: f.name,
       type: f.type,
       preview: f.preview,
     }));
+
+    // If editing, truncate messages up to the edited message
+    let baseMessages = messages;
+    if (editFromId) {
+      const idx = messages.findIndex((m) => m.id === editFromId);
+      if (idx !== -1) baseMessages = messages.slice(0, idx);
+    }
 
     const userMsg: ChatMessageType = {
       id: crypto.randomUUID(),
@@ -89,25 +103,24 @@ const ChatView = () => {
       timestamp: new Date(),
       status: "streaming",
       agent: mode === "cloud" ? "ECHO Cloud" : "Supervisor",
-      model: mode === "cloud" ? "Gemini 3 Flash" : "LLaMA 3.1",
+      model: mode === "cloud" ? getModelLabel() : "LLaMA 3.1",
     };
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    const newMessages = [...baseMessages, userMsg, assistantMsg];
+    setMessages(newMessages);
     setIsStreaming(true);
 
-    // Ensure we have a conversation
     let convId = activeConversationId;
     if (!convId) {
       convId = await createConversation(content.slice(0, 80) || "New Conversation");
     }
 
-    // Save user message
     if (convId) {
       saveMessage(convId, { role: "user", content: userMsg.content });
     }
 
     try {
-      const allMessages = [...messages, userMsg];
+      const allMessages = [...baseMessages, userMsg];
       const response = await sendMessage(
         allMessages,
         (chunk) => {
@@ -117,7 +130,8 @@ const ChatView = () => {
             )
           );
         },
-        depth ?? 1
+        depth ?? 1,
+        selectedModel
       );
 
       const finalContent = response || assistantMsg.content;
@@ -129,7 +143,6 @@ const ChatView = () => {
         )
       );
 
-      // Save assistant message
       if (convId) {
         saveMessage(convId, {
           role: "assistant",
@@ -138,22 +151,71 @@ const ChatView = () => {
           model: assistantMsg.model,
         });
       }
-    } catch {
+    } catch (err: any) {
+      const errorMsg = err?.message || "Connection failed";
+      
+      if (errorMsg.includes("Rate limit") || errorMsg.includes("429")) {
+        toast.error("Rate limit exceeded. Please wait a moment before trying again.");
+      } else if (errorMsg.includes("credits") || errorMsg.includes("402")) {
+        toast.error("AI credits exhausted. Add credits in Settings → Workspace → Usage.");
+      }
+
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsg.id
-            ? {
-                ...m,
-                content:
-                  "⚠ **Connection failed.** Backend is offline.\n\nStart your FastAPI server at `http://localhost:8000` to enable AI responses.",
-                status: "error",
-              }
+            ? { ...m, content: `⚠ **Error:** ${errorMsg}`, status: "error" }
             : m
         )
       );
     } finally {
       setIsStreaming(false);
     }
+  };
+
+  const handleSend = async (content: string, attachments?: FileAttachment[], depth?: number) => {
+    await doSend(content, attachments, depth);
+  };
+
+  const handleEdit = async (msgId: string, newContent: string) => {
+    await doSend(newContent, undefined, 1, msgId);
+  };
+
+  const handleRegenerate = async (msgId: string) => {
+    const idx = messages.findIndex((m) => m.id === msgId);
+    if (idx <= 0) return;
+    // Find the user message before this assistant message
+    const userMsg = messages.slice(0, idx).reverse().find((m) => m.role === "user");
+    if (!userMsg) return;
+    await doSend(userMsg.content, undefined, 1, userMsg.id);
+  };
+
+  const handleExport = async (convId: string, format: "json" | "md") => {
+    const msgs = await loadMessages(convId);
+    const conv = conversations.find((c) => c.id === convId);
+    const title = conv?.title || "conversation";
+
+    let content: string;
+    let mimeType: string;
+    let ext: string;
+
+    if (format === "json") {
+      content = JSON.stringify(msgs.map((m) => ({ role: m.role, content: m.content, timestamp: m.timestamp, agent: m.agent, model: m.model })), null, 2);
+      mimeType = "application/json";
+      ext = "json";
+    } else {
+      content = `# ${title}\n\n` + msgs.map((m) => `## ${m.role === "user" ? "User" : m.agent || "Assistant"}\n\n${m.content}\n`).join("\n---\n\n");
+      mimeType = "text/markdown";
+      ext = "md";
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${title.replace(/[^a-z0-9]/gi, "_").slice(0, 50)}.${ext}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported as ${ext.toUpperCase()}`);
   };
 
   const agentColors: Record<string, string> = {
@@ -165,15 +227,15 @@ const ChatView = () => {
 
   return (
     <div className="flex-1 flex overflow-hidden">
-      {/* Conversation history sidebar */}
       {showHistory && (
-        <div className="w-56 border-r border-border bg-sidebar flex-shrink-0">
+        <div className="w-56 border-r border-border bg-sidebar flex-shrink-0 hidden md:block">
           <ConversationList
             conversations={conversations}
             activeId={activeConversationId}
             onSelect={handleSelectConversation}
             onNew={handleNewConversation}
             onDelete={deleteConversation}
+            onExport={handleExport}
           />
         </div>
       )}
@@ -187,14 +249,14 @@ const ChatView = () => {
           >
             {showHistory ? "◀ History" : "▶ History"}
           </button>
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-display mr-2">
-            Filter Swarm:
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-display mr-2 hidden sm:inline">
+            Filter:
           </span>
           {Object.keys(agentColors).map((agent) => (
             <button
               key={agent}
               onClick={() => toggleAgent(agent)}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono border transition-all ${
+              className={`px-2.5 py-1 rounded text-[11px] font-mono border transition-all hidden sm:block ${
                 activeAgents.has(agent)
                   ? agentColors[agent] + " bg-current/10"
                   : "border-muted text-muted-foreground opacity-40"
@@ -212,26 +274,33 @@ const ChatView = () => {
           </button>
         </div>
 
-        {/* Scanline overlay */}
         <div className="absolute inset-0 scanline z-10 pointer-events-none" />
 
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto relative z-0">
           <div className="max-w-4xl mx-auto py-4">
             {filteredMessages.map((msg) => (
-              <ChatMessage key={msg.id} message={msg} />
+              <ChatMessage
+                key={msg.id}
+                message={msg}
+                onEdit={msg.role === "user" ? handleEdit : undefined}
+                onRegenerate={msg.role === "assistant" && msg.id !== "welcome" ? handleRegenerate : undefined}
+              />
             ))}
             <div ref={messagesEndRef} />
           </div>
         </div>
 
-        {/* Input */}
         <div className="relative z-20">
-          <ChatInput onSend={handleSend} disabled={isStreaming} />
+          <ChatInput
+            onSend={handleSend}
+            disabled={isStreaming}
+            selectedModel={selectedModel}
+            onModelChange={setSelectedModel}
+          />
         </div>
       </div>
 
-      {showPanel && <SystemPanel />}
+      {showPanel && <div className="hidden lg:block"><SystemPanel /></div>}
     </div>
   );
 };
