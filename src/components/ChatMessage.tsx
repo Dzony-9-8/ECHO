@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import { ChatMessage as ChatMessageType } from "@/lib/api";
-import { Bot, User, Cpu } from "lucide-react";
+import { Bot, User, Cpu, Image, FileText } from "lucide-react";
 
 interface Props {
   message: ChatMessageType;
@@ -40,6 +40,44 @@ const ChatMessage = ({ message }: Props) => {
                 → {message.model}
               </span>
             )}
+          </div>
+        )}
+
+        {/* File attachments */}
+        {message.files && message.files.length > 0 && (
+          <div className={`flex gap-2 mb-2 flex-wrap ${isUser ? "justify-end" : ""}`}>
+            {message.files.map((file, i) => (
+              <div
+                key={i}
+                className="rounded border border-border bg-muted/50 p-1.5 flex-shrink-0"
+              >
+                {file.type === "image" && file.preview ? (
+                  <div className="relative">
+                    <img
+                      src={file.preview}
+                      alt={file.name}
+                      className="w-24 h-24 object-cover rounded"
+                    />
+                    <div className="absolute top-1 left-1 flex items-center gap-0.5 bg-background/80 rounded px-1 py-0.5">
+                      <Image className="w-2.5 h-2.5 text-terminal-magenta" />
+                      <span className="text-[8px] text-terminal-magenta font-mono">
+                        Vision
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-24 h-16 flex flex-col items-center justify-center gap-1">
+                    <FileText className="w-5 h-5 text-terminal-cyan" />
+                    <span className="text-[8px] text-terminal-cyan font-mono">
+                      RAG
+                    </span>
+                  </div>
+                )}
+                <p className="text-[8px] text-muted-foreground font-mono mt-1 truncate max-w-[96px]">
+                  {file.name}
+                </p>
+              </div>
+            ))}
           </div>
         )}
 
