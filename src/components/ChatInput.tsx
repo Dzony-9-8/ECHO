@@ -10,6 +10,7 @@ import {
 } from "@/lib/files";
 import ModelSelector, { getSelectedModel } from "./ModelSelector";
 import PromptTemplates from "./PromptTemplates";
+import SlashCommandMenu, { type SlashCommand } from "./SlashCommandMenu";
 
 interface Props {
   onSend: (message: string, files?: FileAttachment[], depth?: number, model?: string) => void;
@@ -23,6 +24,7 @@ const ChatInput = ({ onSend, disabled }: Props) => {
   const [depth, setDepth] = useState(1);
   const [model, setModel] = useState(getSelectedModel);
   const [isListening, setIsListening] = useState(false);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
@@ -101,6 +103,22 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     }
   }, [input]);
 
+  // Show slash menu when input starts with /
+  useEffect(() => {
+    const trimmed = input.trimStart();
+    if (trimmed.startsWith("/") && !trimmed.includes(" ")) {
+      setShowSlashMenu(true);
+    } else {
+      setShowSlashMenu(false);
+    }
+  }, [input]);
+
+  const handleSlashSelect = (cmd: SlashCommand) => {
+    setInput(cmd.prompt);
+    setShowSlashMenu(false);
+    textareaRef.current?.focus();
+  };
+
   const addFiles = useCallback(async (fileList: FileList | File[]) => {
     const newFiles: FileAttachment[] = [];
     for (const file of Array.from(fileList)) {
@@ -128,10 +146,15 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     onSend(input.trim(), files.length > 0 ? files : undefined, depth, model);
     setInput("");
     setFiles([]);
+    setShowSlashMenu(false);
     localStorage.removeItem("echo_draft");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Don't handle Enter when slash menu is open (it handles its own)
+    if (showSlashMenu && (e.key === "Enter" || e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -260,13 +283,21 @@ const ChatInput = ({ onSend, disabled }: Props) => {
         />
 
         <div className="flex-1 relative">
+          {/* Slash command menu */}
+          <SlashCommandMenu
+            input={input.trimStart()}
+            visible={showSlashMenu}
+            onSelect={handleSlashSelect}
+            onClose={() => setShowSlashMenu(false)}
+          />
+
           <div className="absolute left-3 top-3 text-primary text-sm glow-green select-none">{">"}_</div>
           <textarea
             ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={files.length > 0 ? "Describe what to do with these files..." : "Enter command... (drag files here)"}
+            placeholder={files.length > 0 ? "Describe what to do with these files..." : "Enter command or type / for commands..."}
             disabled={disabled}
             rows={1}
             className="w-full bg-input border border-border rounded px-3 py-2.5 pl-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:glow-border resize-none font-mono disabled:opacity-50"

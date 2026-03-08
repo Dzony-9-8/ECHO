@@ -1,7 +1,13 @@
-import { useState, useMemo } from "react";
-import { MessageSquare, Plus, Trash2, Search, Pin, PinOff, Settings2, Calendar, GitBranch } from "lucide-react";
+import { useState, useMemo, useCallback } from "react";
+import { MessageSquare, Plus, Trash2, Search, Pin, PinOff, Settings2, Calendar, GitBranch, Tag } from "lucide-react";
 import type { Conversation } from "@/hooks/useConversations";
 import { getParentBranch, getBranchesForConversation } from "@/lib/branches";
+import {
+  getTags,
+  getTagsForConversation,
+  toggleTagForConversation,
+  type ConversationTag,
+} from "@/lib/conversationTags";
 
 interface SearchResult {
   conversationId: string;
@@ -23,6 +29,9 @@ interface Props {
   systemPrompt?: string;
   onSystemPromptChange?: (prompt: string) => void;
   onSearchMessages?: (query: string) => Promise<SearchResult[]>;
+  // Per-conversation system prompt
+  activeConvSystemPrompt?: string;
+  onActiveConvSystemPromptChange?: (prompt: string) => void;
 }
 
 const ConversationList = ({
@@ -36,6 +45,8 @@ const ConversationList = ({
   systemPrompt = "",
   onSystemPromptChange,
   onSearchMessages,
+  activeConvSystemPrompt = "",
+  onActiveConvSystemPromptChange,
 }: Props) => {
   const [search, setSearch] = useState("");
   const [useRegex, setUseRegex] = useState(false);
@@ -46,9 +57,24 @@ const ConversationList = ({
   const [showDateFilter, setShowDateFilter] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
+  const [tagMenuConvId, setTagMenuConvId] = useState<string | null>(null);
+  const [, forceUpdate] = useState(0); // to re-render on tag toggle
+
+  const allTags = useMemo(() => getTags(), []);
+
+  const handleToggleTag = useCallback((convId: string, tagId: string) => {
+    toggleTagForConversation(convId, tagId);
+    forceUpdate((n) => n + 1);
+  }, []);
 
   const filtered = useMemo(() => {
     let result = conversations;
+
+    // Tag filter
+    if (activeTagFilter) {
+      result = result.filter((c) => getTagsForConversation(c.id).includes(activeTagFilter));
+    }
 
     // Text / regex filter
     if (search) {
@@ -57,7 +83,6 @@ const ConversationList = ({
           const re = new RegExp(search, "i");
           result = result.filter((c) => re.test(c.title));
         } catch {
-          // Invalid regex — fall back to plain search
           result = result.filter((c) => c.title.toLowerCase().includes(search.toLowerCase()));
         }
       } else {
@@ -76,7 +101,7 @@ const ConversationList = ({
     }
 
     return result;
-  }, [conversations, search, useRegex, dateFrom, dateTo]);
+  }, [conversations, search, useRegex, dateFrom, dateTo, activeTagFilter]);
 
   // Sort: pinned first, then by date
   const sorted = [...filtered].sort((a, b) => {
@@ -113,22 +138,60 @@ const ConversationList = ({
 
         {/* System prompt editor */}
         {showSystemPrompt && onSystemPromptChange && (
-          <div className="space-y-1">
-            <label className="text-[9px] uppercase tracking-widest text-terminal-amber font-mono">
-              System Prompt
-            </label>
-            <textarea
-              value={systemPrompt}
-              onChange={(e) => onSystemPromptChange(e.target.value)}
-              placeholder="Custom instructions for the AI..."
-              className="w-full bg-input border border-border rounded px-2 py-1.5 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-terminal-amber font-mono resize-none"
-              rows={3}
-            />
-            <p className="text-[8px] text-muted-foreground font-mono">
-              Applied to all new messages
-            </p>
+          <div className="space-y-2">
+            <div className="space-y-1">
+              <label className="text-[9px] uppercase tracking-widest text-terminal-amber font-mono">
+                Global System Prompt
+              </label>
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => onSystemPromptChange(e.target.value)}
+                placeholder="Custom instructions for all conversations..."
+                className="w-full bg-input border border-border rounded px-2 py-1.5 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-terminal-amber font-mono resize-none"
+                rows={2}
+              />
+            </div>
+            {/* Per-conversation system prompt */}
+            {activeId && onActiveConvSystemPromptChange && (
+              <div className="space-y-1">
+                <label className="text-[9px] uppercase tracking-widest text-terminal-cyan font-mono">
+                  This Conversation Only
+                </label>
+                <textarea
+                  value={activeConvSystemPrompt}
+                  onChange={(e) => onActiveConvSystemPromptChange(e.target.value)}
+                  placeholder="Override for this chat only..."
+                  className="w-full bg-input border border-border rounded px-2 py-1.5 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-terminal-cyan font-mono resize-none"
+                  rows={2}
+                />
+                <p className="text-[8px] text-muted-foreground font-mono">
+                  {activeConvSystemPrompt ? "Overrides global prompt for this conversation" : "Empty = uses global prompt"}
+                </p>
+              </div>
+            )}
           </div>
         )}
+
+        {/* Tag filter chips */}
+        <div className="flex gap-1 flex-wrap">
+          {allTags.map((tag) => (
+            <button
+              key={tag.id}
+              onClick={() => setActiveTagFilter(activeTagFilter === tag.id ? null : tag.id)}
+              className={`px-1.5 py-0.5 rounded text-[8px] font-mono border transition-colors ${
+                activeTagFilter === tag.id
+                  ? "border-foreground bg-foreground/10 text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+              style={{
+                borderColor: activeTagFilter === tag.id ? `hsl(${tag.color})` : undefined,
+                color: `hsl(${tag.color})`,
+              }}
+            >
+              {tag.label}
+            </button>
+          ))}
+        </div>
 
         {/* Search bar with regex toggle */}
         <div className="relative flex gap-1">
@@ -243,60 +306,120 @@ const ConversationList = ({
           const isPinned = pinnedIds.has(conv.id);
           const parentBranch = getParentBranch(conv.id);
           const childBranches = getBranchesForConversation(conv.id);
+          const convTags = getTagsForConversation(conv.id);
           return (
-            <div
-              key={conv.id}
-              onClick={() => onSelect(conv.id)}
-              className={`group flex items-center gap-2 px-3 py-2 cursor-pointer text-xs font-mono transition-all ${
-                activeId === conv.id
-                  ? "text-primary bg-muted border-r-2 border-primary"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-              }`}
-            >
-              {isPinned ? (
-                <Pin className="w-3 h-3 flex-shrink-0 text-terminal-amber" />
-              ) : parentBranch ? (
-                <GitBranch className="w-3 h-3 flex-shrink-0 text-accent" />
-              ) : (
-                <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />
-              )}
-              <div className="flex-1 min-w-0">
-                <span className="block truncate">{conv.title}</span>
-                {childBranches.length > 0 && (
-                  <span className="text-[8px] text-accent">
-                    {childBranches.length} branch{childBranches.length > 1 ? "es" : ""}
-                  </span>
+            <div key={conv.id} className="relative">
+              <div
+                onClick={() => onSelect(conv.id)}
+                className={`group flex items-center gap-2 px-3 py-2 cursor-pointer text-xs font-mono transition-all ${
+                  activeId === conv.id
+                    ? "text-primary bg-muted border-r-2 border-primary"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                }`}
+              >
+                {isPinned ? (
+                  <Pin className="w-3 h-3 flex-shrink-0 text-terminal-amber" />
+                ) : parentBranch ? (
+                  <GitBranch className="w-3 h-3 flex-shrink-0 text-accent" />
+                ) : (
+                  <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />
                 )}
-              </div>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                {onTogglePin && (
+                <div className="flex-1 min-w-0">
+                  <span className="block truncate">{conv.title}</span>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    {convTags.map((tagId) => {
+                      const tag = allTags.find((t) => t.id === tagId);
+                      if (!tag) return null;
+                      return (
+                        <span
+                          key={tagId}
+                          className="text-[7px] px-1 py-px rounded font-mono"
+                          style={{
+                            color: `hsl(${tag.color})`,
+                            backgroundColor: `hsl(${tag.color} / 0.15)`,
+                          }}
+                        >
+                          {tag.label}
+                        </span>
+                      );
+                    })}
+                    {childBranches.length > 0 && (
+                      <span className="text-[8px] text-accent">
+                        {childBranches.length} branch{childBranches.length > 1 ? "es" : ""}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {/* Tag button */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      onTogglePin(conv.id);
+                      setTagMenuConvId(tagMenuConvId === conv.id ? null : conv.id);
                     }}
-                    className="text-muted-foreground hover:text-terminal-amber transition-colors"
-                    title={isPinned ? "Unpin" : "Pin"}
+                    className="text-muted-foreground hover:text-terminal-cyan transition-colors"
+                    title="Tags"
                   >
-                    {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+                    <Tag className="w-3 h-3" />
                   </button>
-                )}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(conv.id);
-                  }}
-                  className="text-terminal-red hover:text-terminal-red/80 transition-colors"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
+                  {onTogglePin && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onTogglePin(conv.id);
+                      }}
+                      className="text-muted-foreground hover:text-terminal-amber transition-colors"
+                      title={isPinned ? "Unpin" : "Pin"}
+                    >
+                      {isPinned ? <PinOff className="w-3 h-3" /> : <Pin className="w-3 h-3" />}
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(conv.id);
+                    }}
+                    className="text-terminal-red hover:text-terminal-red/80 transition-colors"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
+              {/* Tag menu popup */}
+              {tagMenuConvId === conv.id && (
+                <div className="absolute right-2 top-full z-40 bg-card border border-border rounded shadow-lg p-1.5 space-y-0.5 min-w-24">
+                  {allTags.map((tag) => {
+                    const active = convTags.includes(tag.id);
+                    return (
+                      <button
+                        key={tag.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleTag(conv.id, tag.id);
+                        }}
+                        className={`w-full flex items-center gap-1.5 px-2 py-1 rounded text-[9px] font-mono transition-colors ${
+                          active ? "bg-muted" : "hover:bg-muted/50"
+                        }`}
+                      >
+                        <span
+                          className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{ backgroundColor: `hsl(${tag.color})` }}
+                        />
+                        <span style={{ color: active ? `hsl(${tag.color})` : undefined }}>
+                          {tag.label}
+                        </span>
+                        {active && <span className="ml-auto text-primary">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
         {sorted.length === 0 && (
           <p className="text-[10px] text-muted-foreground text-center py-4 font-mono">
-            {search || dateFrom || dateTo ? "No matches" : "No conversations yet"}
+            {search || dateFrom || dateTo || activeTagFilter ? "No matches" : "No conversations yet"}
           </p>
         )}
       </div>

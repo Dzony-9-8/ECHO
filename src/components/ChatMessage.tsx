@@ -1,13 +1,18 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { motion } from "framer-motion";
 import { ChatMessage as ChatMessageType } from "@/lib/api";
 import { Bot, User, Cpu, Image, FileText, Edit3, RefreshCw, Copy, Check, Hash, GitBranch } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useState, useMemo, lazy, Suspense } from "react";
 import CodeBlock from "./CodeBlock";
 import BranchIndicator, { type BranchInfo } from "./BranchIndicator";
 import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 import { getBranchesForMessage } from "@/lib/branches";
+
+const MermaidDiagram = lazy(() => import("./MermaidDiagram"));
 
 interface Props {
   message: ChatMessageType;
@@ -143,12 +148,21 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
               ) : (
                 <div className="prose prose-sm prose-invert max-w-none [&_code]:text-terminal-amber [&_code]:bg-muted [&_pre]:bg-transparent [&_pre]:border-none [&_pre]:p-0 [&_pre]:m-0">
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
+                    remarkPlugins={[remarkGfm, remarkMath]}
+                    rehypePlugins={[rehypeKatex]}
                     components={{
                       code({ className, children, ...props }) {
                         const match = /language-(\w+)/.exec(className || "");
                         const codeStr = String(children).replace(/\n$/, "");
                         if (match) {
+                          // Mermaid diagram
+                          if (match[1] === "mermaid") {
+                            return (
+                              <Suspense fallback={<div className="text-[10px] font-mono text-muted-foreground p-2">Loading diagram...</div>}>
+                                <MermaidDiagram>{codeStr}</MermaidDiagram>
+                              </Suspense>
+                            );
+                          }
                           return <CodeBlock language={match[1]}>{codeStr}</CodeBlock>;
                         }
                         return (
@@ -185,7 +199,6 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
                   <RefreshCw className="w-3 h-3" />
                 </button>
               )}
-              {/* Branch button */}
               {onBranch && message.id !== "welcome" && (
                 <button
                   onClick={() => onBranch(message.id)}
@@ -195,7 +208,6 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
                   <GitBranch className="w-3 h-3" />
                 </button>
               )}
-              {/* Token count */}
               <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground font-mono ml-1" title={`~${tokenCount} tokens`}>
                 <Hash className="w-2.5 h-2.5" />
                 {formatTokenCount(tokenCount)}
@@ -208,7 +220,6 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
         </div>
       </motion.div>
 
-      {/* Branch indicators below message */}
       {branches.length > 0 && onSelectBranch && (
         <BranchIndicator branches={branches} onSelectBranch={onSelectBranch} />
       )}

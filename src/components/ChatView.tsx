@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import ChatMessage from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
 import SystemPanel from "@/components/SystemPanel";
+import StreamingIndicator from "@/components/StreamingIndicator";
 import { type ChatMessage as ChatMessageType, sendMessage, getBackendMode } from "@/lib/api";
 import { type FileAttachment } from "@/lib/files";
 import { useConversations } from "@/hooks/useConversations";
@@ -15,6 +16,7 @@ import { toast } from "sonner";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 import { saveBranch, getParentBranch } from "@/lib/branches";
+import { getConversationSystemPrompt, setConversationSystemPrompt } from "@/lib/conversationSystemPrompts";
 
 const WELCOME_MSG: ChatMessageType = {
   id: "welcome",
@@ -28,6 +30,7 @@ const WELCOME_MSG: ChatMessageType = {
 const ChatView = () => {
   const [messages, setMessages] = useState<ChatMessageType[]>([WELCOME_MSG]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamStartTime, setStreamStartTime] = useState(0);
   const [showPanel, setShowPanel] = useState(true);
   const [showHistory, setShowHistory] = useState(true);
   const [showExport, setShowExport] = useState(false);
@@ -38,6 +41,7 @@ const ChatView = () => {
   const [systemPrompt, setSystemPrompt] = useState(
     localStorage.getItem("echo_system_prompt") || ""
   );
+  const [activeConvSystemPrompt, setActiveConvSystemPrompt] = useState("");
   const [activeAgents, setActiveAgents] = useState<Set<string>>(
     new Set(["Supervisor", "Developer", "Researcher", "Critic"])
   );
@@ -67,6 +71,22 @@ const ChatView = () => {
     () => activeConversationId ? getParentBranch(activeConversationId) : undefined,
     [activeConversationId]
   );
+
+  // Load per-conversation system prompt when switching
+  useEffect(() => {
+    if (activeConversationId) {
+      setActiveConvSystemPrompt(getConversationSystemPrompt(activeConversationId));
+    } else {
+      setActiveConvSystemPrompt("");
+    }
+  }, [activeConversationId]);
+
+  const handleConvSystemPromptChange = useCallback((prompt: string) => {
+    setActiveConvSystemPrompt(prompt);
+    if (activeConversationId) {
+      setConversationSystemPrompt(activeConversationId, prompt);
+    }
+  }, [activeConversationId]);
 
   const handleSelectConversation = useCallback(async (id: string) => {
     setActiveConversationId(id);
@@ -145,15 +165,12 @@ const ChatView = () => {
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return;
 
-    // Take messages up to and including the branch point
     const branchMessages = messages.slice(0, idx + 1);
     const branchTitle = `Branch: ${branchMessages[branchMessages.length - 1].content.slice(0, 40)}...`;
 
-    // Create a new conversation for the branch
     const newConvId = await createConversation(branchTitle);
     if (!newConvId) return;
 
-    // Save branch metadata
     saveBranch({
       conversationId: newConvId,
       parentConversationId: activeConversationId || "",
@@ -162,7 +179,6 @@ const ChatView = () => {
       createdAt: new Date().toISOString(),
     });
 
-    // Save all messages up to branch point into new conversation
     for (const msg of branchMessages.filter(m => m.id !== "welcome")) {
       await saveMessage(newConvId, {
         role: msg.role,
@@ -172,7 +188,6 @@ const ChatView = () => {
       });
     }
 
-    // Switch to the new branch
     setActiveConversationId(newConvId);
     setMessages(branchMessages);
     toast.success("Branch created — continue the conversation from here");
@@ -182,12 +197,20 @@ const ChatView = () => {
     handleSelectConversation(conversationId);
   };
 
-  // Navigate to parent branch
   const handleGoToParent = () => {
     if (parentBranch) {
       handleSelectConversation(parentBranch.parentConversationId);
     }
   };
+
+  // Determine the effective system prompt for the current conversation
+  const getEffectiveSystemPrompt = useCallback((): string => {
+    if (activeConversationId) {
+      const perConv = getConversationSystemPrompt(activeConversationId);
+      if (perConv) return perConv;
+    }
+    return systemPrompt;
+  }, [activeConversationId, systemPrompt]);
 
   const doSend = async (
     content: string,
@@ -222,9 +245,22 @@ const ChatView = () => {
       model: mode === "cloud" ? (model?.split("/").pop() || "Gemini 3 Flash") : "LLaMA 3.1",
     };
 
-    const allBefore = [...prevMessages, userMsg];
-    setMessages([...allBefore, assistantMsg]);
+    // Prepend system prompt if set
+    const effectivePrompt = getEffectiveSystemPrompt();
+    let allBefore = [...prevMessages, userMsg];
+    if (effectivePrompt) {
+      const sysMsg: ChatMessageType = {
+        id: "system-prompt",
+        role: "system",
+        content: effectivePrompt,
+        timestamp: new Date(),
+      };
+      allBefore = [sysMsg, ...allBefore.filter(m => m.id !== "system-prompt")];
+    }
+
+    setMessages([...allBefore.filter(m => m.id !== "system-prompt"), assistantMsg]);
     setIsStreaming(true);
+    setStreamStartTime(Date.now());
 
     let convId = activeConversationId;
     if (!convId) {
@@ -262,7 +298,6 @@ const ChatView = () => {
         });
       }
 
-      // Log usage analytics
       const totalMsgTokens = estimateTokens(userMsg.content) + estimateTokens(finalContent);
       const latency = Date.now() - assistantMsg.timestamp.getTime();
       logUsage(assistantMsg.model || "unknown", totalMsgTokens, latency, convId || undefined);
@@ -316,6 +351,9 @@ const ChatView = () => {
     Critic: "border-terminal-red text-terminal-red",
   };
 
+  // Get streaming message content for the indicator
+  const streamingMsg = isStreaming ? messages.find(m => m.status === "streaming") : null;
+
   return (
     <div className="flex-1 flex overflow-hidden">
       {/* Desktop history sidebar */}
@@ -332,6 +370,8 @@ const ChatView = () => {
             systemPrompt={systemPrompt}
             onSystemPromptChange={setSystemPrompt}
             onSearchMessages={searchMessages}
+            activeConvSystemPrompt={activeConvSystemPrompt}
+            onActiveConvSystemPromptChange={handleConvSystemPromptChange}
           />
         </div>
       )}
@@ -358,6 +398,8 @@ const ChatView = () => {
               systemPrompt={systemPrompt}
               onSystemPromptChange={setSystemPrompt}
               onSearchMessages={searchMessages}
+              activeConvSystemPrompt={activeConvSystemPrompt}
+              onActiveConvSystemPromptChange={handleConvSystemPromptChange}
             />
           </div>
         </>
@@ -431,6 +473,13 @@ const ChatView = () => {
 
           <div className="flex-1 min-w-[4px]" />
 
+          {/* Per-conv system prompt indicator */}
+          {activeConvSystemPrompt && (
+            <span className="text-[8px] font-mono text-terminal-cyan flex-shrink-0 hidden sm:inline" title="Per-conversation prompt active">
+              📌 Custom prompt
+            </span>
+          )}
+
           {/* Token counter */}
           {totalTokens > 0 && (
             <span className="text-[9px] font-mono text-muted-foreground flex-shrink-0 hidden sm:inline" title={`~${totalTokens} tokens total`}>
@@ -501,6 +550,15 @@ const ChatView = () => {
             <div ref={messagesEndRef} />
           </div>
         </div>
+
+        {/* Streaming indicator */}
+        {streamingMsg && (
+          <StreamingIndicator
+            content={streamingMsg.content}
+            startTime={streamStartTime}
+            isStreaming={isStreaming}
+          />
+        )}
 
         {/* Input */}
         <div className="relative z-20">
