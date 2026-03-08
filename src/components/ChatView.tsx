@@ -40,7 +40,7 @@ const ChatView = () => {
     (m) => !m.agent || m.agent === "System" || activeAgents.has(m.agent)
   );
 
-  const handleSend = async (content: string, attachments?: FileAttachment[]) => {
+  const handleSend = async (content: string, attachments?: FileAttachment[], depth?: number) => {
     const filesMeta = attachments?.map((f) => ({
       name: f.name,
       type: f.type,
