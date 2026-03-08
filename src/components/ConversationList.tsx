@@ -136,8 +136,19 @@ const ConversationList = ({
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={useRegex ? "Regex pattern..." : "Search chats..."}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                if (deepSearch && onSearchMessages && e.target.value.trim().length >= 2) {
+                  setSearching(true);
+                  onSearchMessages(e.target.value.trim()).then((r) => {
+                    setSearchResults(r);
+                    setSearching(false);
+                  });
+                } else {
+                  setSearchResults([]);
+                }
+              }}
+              placeholder={deepSearch ? "Search all messages..." : useRegex ? "Regex pattern..." : "Search chats..."}
               className="w-full bg-input border border-border rounded pl-7 pr-2 py-1.5 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary font-mono"
             />
           </div>
