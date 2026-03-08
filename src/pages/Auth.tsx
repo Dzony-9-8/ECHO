@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Terminal, LogIn, UserPlus, Loader2 } from "lucide-react";
+import { lovable } from "@/integrations/lovable/index";
+import { Terminal, LogIn, UserPlus, Loader2, KeyRound } from "lucide-react";
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
