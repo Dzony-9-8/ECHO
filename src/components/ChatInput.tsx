@@ -228,6 +228,22 @@ const ChatInput = ({ onSend, disabled }: Props) => {
             className="w-full bg-input border border-border rounded px-3 py-2.5 pl-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:glow-border resize-none font-mono disabled:opacity-50"
           />
         </div>
+        {/* Depth slider */}
+        <div className="flex items-center gap-1.5 px-2 py-1.5 rounded border border-border bg-muted/50" title="Critic iteration depth">
+          <Layers className="w-3.5 h-3.5 text-terminal-red flex-shrink-0" />
+          <input
+            type="range"
+            min={0}
+            max={5}
+            value={depth}
+            onChange={(e) => setDepth(Number(e.target.value))}
+            className="w-16 h-1 accent-terminal-red cursor-pointer"
+          />
+          <span className="text-[10px] font-mono text-terminal-red min-w-[14px] text-center">
+            {depth}
+          </span>
+        </div>
+
         <button
           onClick={handleSubmit}
           disabled={(!input.trim() && files.length === 0) || disabled}
