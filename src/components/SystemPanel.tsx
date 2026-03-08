@@ -20,6 +20,9 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  Timer,
+  Hash,
+  RotateCcw,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -32,7 +35,7 @@ import {
   type BackendMode,
 } from "@/lib/api";
 import { useAgentStatus } from "@/hooks/useAgentStatus";
-import type { AgentStatus } from "@/lib/agentStatus";
+import { PIPELINE, resetMetrics, type AgentStatus } from "@/lib/agentStatus";
 
 const agentIcons: Record<string, typeof Brain> = {
   Supervisor: Crown,
@@ -60,6 +63,14 @@ const agentColorMap: Record<string, string> = {
   "ECHO Cloud": "text-terminal-cyan",
 };
 
+const agentBorderMap: Record<string, string> = {
+  Supervisor: "border-terminal-amber",
+  Researcher: "border-terminal-cyan",
+  Developer: "border-terminal-cyan",
+  Critic: "border-terminal-red",
+  "ECHO Cloud": "border-terminal-cyan",
+};
+
 const statusIndicator = (status: AgentStatus["status"]) => {
   switch (status) {
     case "active":
@@ -81,12 +92,71 @@ const statusIndicator = (status: AgentStatus["status"]) => {
   }
 };
 
+const formatMs = (ms: number): string => {
+  if (ms < 1000) return `${ms}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+};
+
+const formatTokens = (n: number): string => {
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return `${n}`;
+};
+
+// Pipeline visualization component
+const PipelineViz = ({ activeAgent, pipelineStep }: { activeAgent: string | null; pipelineStep: number }) => {
+  const mode = getBackendMode();
+  if (mode === "cloud") return null;
+
+  return (
+    <div className="flex items-center gap-0.5 mt-2">
+      {PIPELINE.map((agent, i) => {
+        const isActive = agent === activeAgent;
+        const isPast = pipelineStep > i;
+        const color = agentColorMap[agent] || "text-muted-foreground";
+        const borderColor = agentBorderMap[agent] || "border-border";
+
+        return (
+          <div key={agent} className="flex items-center gap-0.5">
+            <motion.div
+              className={`flex items-center gap-1 px-1.5 py-0.5 rounded border text-[8px] font-mono transition-all ${
+                isActive
+                  ? `${color} ${borderColor} bg-current/10`
+                  : isPast
+                  ? `text-primary border-primary/30 bg-primary/5`
+                  : "text-muted-foreground/50 border-border/50"
+              }`}
+              animate={isActive ? { scale: [1, 1.05, 1] } : {}}
+              transition={isActive ? { repeat: Infinity, duration: 1.5 } : {}}
+            >
+              {isPast && <CheckCircle2 className="w-2.5 h-2.5" />}
+              {isActive && (
+                <motion.div
+                  className="w-2 h-2 rounded-full bg-current"
+                  animate={{ opacity: [1, 0.3, 1] }}
+                  transition={{ repeat: Infinity, duration: 0.8 }}
+                />
+              )}
+              <span>{agent.slice(0, 3)}</span>
+            </motion.div>
+            {i < PIPELINE.length - 1 && (
+              <ChevronRight className={`w-2.5 h-2.5 flex-shrink-0 ${
+                isPast ? "text-primary/50" : "text-muted-foreground/30"
+              }`} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const SystemPanel = () => {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [backendUrl, setUrl] = useState(getBackendUrl());
   const [mode, setMode] = useState<BackendMode>(getBackendMode());
   const [showSettings, setShowSettings] = useState(false);
-  const { agents, activeAgent } = useAgentStatus();
+  const { agents, activeAgent, pipelineStep } = useAgentStatus();
 
   useEffect(() => {
     const check = () => checkHealth().then(setStatus);
@@ -102,6 +172,8 @@ const SystemPanel = () => {
   };
 
   const isOnline = status?.backend === "online";
+  const totalTokens = agents.reduce((s, a) => s + a.tokensProcessed, 0);
+  const totalRequests = agents.reduce((s, a) => s + a.requestCount, 0);
 
   return (
     <div className="w-72 border-l border-border bg-sidebar flex flex-col h-full overflow-hidden">
@@ -178,16 +250,10 @@ const SystemPanel = () => {
             ) : (
               <WifiOff className="w-3.5 h-3.5 text-terminal-red" />
             )}
-            <span
-              className={`text-xs font-mono ${
-                isOnline ? "text-primary" : "text-terminal-red"
-              }`}
-            >
+            <span className={`text-xs font-mono ${isOnline ? "text-primary" : "text-terminal-red"}`}>
               {isOnline ? "CONNECTED" : "OFFLINE"}
             </span>
-            <span className="text-[9px] text-muted-foreground ml-auto uppercase">
-              {mode}
-            </span>
+            <span className="text-[9px] text-muted-foreground ml-auto uppercase">{mode}</span>
           </div>
 
           {mode === "cloud" && isOnline && (
@@ -205,9 +271,7 @@ const SystemPanel = () => {
               <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                 <div
                   className="h-full bg-primary rounded-full transition-all"
-                  style={{
-                    width: `${(status.gpu.vram_used / status.gpu.vram_total) * 100}%`,
-                  }}
+                  style={{ width: `${(status.gpu.vram_used / status.gpu.vram_total) * 100}%` }}
                 />
               </div>
               <div className="text-[10px] text-muted-foreground">
@@ -233,10 +297,7 @@ const SystemPanel = () => {
               </span>
             </div>
             {status.models_loaded.map((model) => (
-              <div
-                key={model}
-                className="text-xs text-foreground font-mono flex items-center gap-1.5 py-0.5"
-              >
+              <div key={model} className="text-xs text-foreground font-mono flex items-center gap-1.5 py-0.5">
                 <ChevronRight className="w-2.5 h-2.5 text-primary" />
                 {model}
               </div>
@@ -244,7 +305,7 @@ const SystemPanel = () => {
           </div>
         )}
 
-        {/* Active Agent Banner */}
+        {/* Active Agent Banner with Pipeline */}
         <AnimatePresence>
           {activeAgent && (
             <motion.div
@@ -274,11 +335,13 @@ const SystemPanel = () => {
                     {activeAgent}
                   </span>
                   {agents.find((a) => a.name === activeAgent)?.currentTask && (
-                    <span className="text-[9px] text-muted-foreground truncate">
+                    <span className="text-[9px] text-muted-foreground truncate flex-1">
                       {agents.find((a) => a.name === activeAgent)?.currentTask}
                     </span>
                   )}
                 </div>
+                {/* Pipeline visualization */}
+                <PipelineViz activeAgent={activeAgent} pipelineStep={pipelineStep} />
               </div>
             </motion.div>
           )}
@@ -300,37 +363,95 @@ const SystemPanel = () => {
               const Icon = agentIcons[agent.name] || Brain;
               const color = agentColorMap[agent.name] || "text-primary";
               const isActive = agent.status === "active" || agent.status === "processing";
+              const avgMs = agent.requestCount > 0 ? Math.round(agent.totalResponseMs / agent.requestCount) : 0;
 
               return (
                 <motion.div
                   key={agent.name}
                   layout
-                  className={`flex items-center gap-2 p-2 rounded border transition-all ${
+                  className={`p-2 rounded border transition-all ${
                     isActive
                       ? "border-primary/40 bg-primary/5"
                       : "border-border bg-muted/30 hover:bg-muted/50"
                   }`}
                 >
-                  <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${color}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-mono text-foreground flex items-center gap-1.5">
-                      {agent.name}
-                      {isActive && agent.currentTask && (
-                        <span className="text-[8px] text-muted-foreground truncate">
-                          — {agent.currentTask}
-                        </span>
-                      )}
+                  <div className="flex items-center gap-2">
+                    <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${color}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-mono text-foreground flex items-center gap-1.5">
+                        {agent.name}
+                        {isActive && agent.currentTask && (
+                          <span className="text-[8px] text-muted-foreground truncate">
+                            — {agent.currentTask}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground truncate">
+                        {agent.model}
+                      </div>
                     </div>
-                    <div className="text-[10px] text-muted-foreground truncate">
-                      {agent.model}
-                    </div>
+                    {statusIndicator(agent.status)}
                   </div>
-                  {statusIndicator(agent.status)}
+
+                  {/* Per-agent metrics row */}
+                  {agent.requestCount > 0 && (
+                    <div className="mt-1.5 flex items-center gap-3 text-[8px] font-mono text-muted-foreground">
+                      <span className="flex items-center gap-0.5" title="Tokens processed">
+                        <Hash className="w-2.5 h-2.5" />
+                        {formatTokens(agent.tokensProcessed)}
+                      </span>
+                      <span className="flex items-center gap-0.5" title="Avg response time">
+                        <Timer className="w-2.5 h-2.5" />
+                        {formatMs(avgMs)}
+                      </span>
+                      <span title="Requests">{agent.requestCount} req</span>
+                    </div>
+                  )}
                 </motion.div>
               );
             })}
           </div>
         </div>
+
+        {/* Aggregate metrics */}
+        {totalRequests > 0 && (
+          <div className="px-3 pb-3">
+            <div className="border border-border rounded p-2 bg-muted/20">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-mono">
+                  Session Totals
+                </span>
+                <button
+                  onClick={() => resetMetrics()}
+                  className="text-muted-foreground/50 hover:text-foreground transition-colors"
+                  title="Reset metrics"
+                >
+                  <RotateCcw className="w-2.5 h-2.5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="text-center">
+                  <div className="text-xs font-mono text-foreground font-bold">
+                    {formatTokens(totalTokens)}
+                  </div>
+                  <div className="text-[8px] text-muted-foreground">tokens</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs font-mono text-foreground font-bold">
+                    {totalRequests}
+                  </div>
+                  <div className="text-[8px] text-muted-foreground">requests</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-xs font-mono text-foreground font-bold">
+                    {formatMs(totalRequests > 0 ? Math.round(agents.reduce((s, a) => s + a.totalResponseMs, 0) / totalRequests) : 0)}
+                  </div>
+                  <div className="text-[8px] text-muted-foreground">avg time</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Footer */}

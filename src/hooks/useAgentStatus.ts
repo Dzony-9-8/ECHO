@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   subscribeAgentStatus,
   fetchAgentStatus,
@@ -9,13 +9,15 @@ import { getBackendMode } from "@/lib/api";
 export const useAgentStatus = (pollInterval = 5000) => {
   const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
+  const [pipelineStep, setPipelineStep] = useState(-1);
   const intervalRef = useRef<ReturnType<typeof setInterval>>();
 
   // Subscribe to client-side status changes
   useEffect(() => {
-    const unsub = subscribeAgentStatus((a, active) => {
+    const unsub = subscribeAgentStatus((a, active, step) => {
       setAgents(a);
       setActiveAgent(active);
+      setPipelineStep(step);
     });
     return unsub;
   }, []);
@@ -38,5 +40,5 @@ export const useAgentStatus = (pollInterval = 5000) => {
     };
   }, [pollInterval]);
 
-  return { agents, activeAgent };
+  return { agents, activeAgent, pipelineStep };
 };
