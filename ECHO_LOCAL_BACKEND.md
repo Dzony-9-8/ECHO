@@ -792,6 +792,80 @@ curl -X POST http://localhost:8000/api/chat ^
 
 ---
 
+## 14. Agent Skills System
+
+The frontend has an **Agent Skills** panel (`src/lib/agentSkills.ts`, `src/components/AgentSkillsPanel.tsx`) that allows users to upload `.md` skill files (e.g. from Claude Code) and assign them to specific agents.
+
+### How it works:
+- Skills are stored in `localStorage` under `echo_agent_skills`
+- Each skill has: `name`, `content` (markdown), `agent` (Supervisor/Developer/Researcher/Critic/global), `enabled` flag
+- When sending a chat message, the frontend calls `buildSkillsPrompt(agentName)` which concatenates all enabled skills for that agent into a system prompt section
+- The skills are appended to the system prompt as: `## Agent Skills\n### Skill: <name>\n<content>`
+
+### Backend integration:
+When the local backend receives a `/api/chat` request, the system prompt will already contain the skills content — **no backend changes needed**. However, if you want the backend to manage skills server-side:
+
+```python
+# Optional: /api/skills endpoint for server-managed skills
+@app.get("/api/skills")
+async def get_skills():
+    return {"skills": load_skills_from_disk()}
+
+@app.post("/api/skills")
+async def add_skill(skill: dict):
+    save_skill_to_disk(skill)
+    return {"status": "ok"}
+```
+
+### Skill file format:
+Skills are standard `.md` files. The title is extracted from the first `# Heading` or the filename:
+```markdown
+# Code Review Expert
+You are an expert code reviewer. When reviewing code:
+1. Check for security vulnerabilities
+2. Evaluate performance implications
+3. Suggest cleaner patterns
+...
+```
+
+---
+
+## 15. Agent Metrics & Pipeline
+
+The frontend tracks per-agent metrics in `localStorage` under `echo_agent_metrics`:
+- `tokensProcessed`: cumulative tokens handled by each agent
+- `totalResponseMs`: cumulative response time in ms
+- `requestCount`: number of requests processed
+
+The `/api/agents` endpoint should include these fields. The frontend also shows a **pipeline visualization** (`Supervisor → Researcher → Developer → Critic`) with progress indicators during active processing.
+
+### Updated `/api/agents` response fields:
+```json
+{
+  "agents": [
+    {
+      "name": "Supervisor",
+      "status": "active",
+      "model": "llama3.1:8b",
+      "currentTask": "Routing user query",
+      "lastActive": "2024-01-15T10:30:00Z",
+      "tokensProcessed": 12500,
+      "totalResponseMs": 45000,
+      "requestCount": 15
+    }
+  ],
+  "activeAgent": "Supervisor",
+  "pipeline": ["Supervisor", "Researcher", "Developer", "Critic"]
+}
+```
+
+The backend should update `tokensProcessed`, `totalResponseMs`, and `requestCount` as each agent handles requests in the multi-agent pipeline. The frontend displays:
+- Per-agent: token count, avg response time, request count
+- Session totals: aggregate tokens, requests, avg time
+- Pipeline progress: visual dots showing which agent step is active
+
+---
+
 ## Summary
 
 1. Install Python 3.12 + Ollama + pull models
