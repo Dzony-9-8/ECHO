@@ -3,6 +3,15 @@ import { MessageSquare, Plus, Trash2, Search, Pin, PinOff, Settings2, Calendar, 
 import type { Conversation } from "@/hooks/useConversations";
 import { getParentBranch, getBranchesForConversation } from "@/lib/branches";
 
+interface SearchResult {
+  conversationId: string;
+  conversationTitle: string;
+  messageContent: string;
+  messageRole: string;
+  messageAgent?: string;
+  createdAt: string;
+}
+
 interface Props {
   conversations: Conversation[];
   activeId: string | null;
@@ -13,6 +22,7 @@ interface Props {
   onTogglePin?: (id: string) => void;
   systemPrompt?: string;
   onSystemPromptChange?: (prompt: string) => void;
+  onSearchMessages?: (query: string) => Promise<SearchResult[]>;
 }
 
 const ConversationList = ({
@@ -25,9 +35,13 @@ const ConversationList = ({
   onTogglePin,
   systemPrompt = "",
   onSystemPromptChange,
+  onSearchMessages,
 }: Props) => {
   const [search, setSearch] = useState("");
   const [useRegex, setUseRegex] = useState(false);
+  const [deepSearch, setDeepSearch] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [showDateFilter, setShowDateFilter] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
@@ -122,8 +136,19 @@ const ConversationList = ({
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={useRegex ? "Regex pattern..." : "Search chats..."}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                if (deepSearch && onSearchMessages && e.target.value.trim().length >= 2) {
+                  setSearching(true);
+                  onSearchMessages(e.target.value.trim()).then((r) => {
+                    setSearchResults(r);
+                    setSearching(false);
+                  });
+                } else {
+                  setSearchResults([]);
+                }
+              }}
+              placeholder={deepSearch ? "Search all messages..." : useRegex ? "Regex pattern..." : "Search chats..."}
               className="w-full bg-input border border-border rounded pl-7 pr-2 py-1.5 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary font-mono"
             />
           </div>
@@ -149,7 +174,39 @@ const ConversationList = ({
           >
             <Calendar className="w-3 h-3" />
           </button>
+          {onSearchMessages && (
+            <button
+              onClick={() => { setDeepSearch(!deepSearch); setSearchResults([]); }}
+              className={`px-1.5 rounded border text-[9px] font-mono transition-colors ${
+                deepSearch
+                  ? "border-primary text-primary bg-primary/10"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+              title="Search inside all messages"
+            >
+              ⋯
+            </button>
+          )}
         </div>
+
+        {/* Deep search results */}
+        {deepSearch && searchResults.length > 0 && (
+          <div className="space-y-1 max-h-40 overflow-y-auto">
+            <label className="text-[9px] uppercase tracking-widest text-primary font-mono">
+              {searching ? "Searching..." : `${searchResults.length} result${searchResults.length > 1 ? "s" : ""}`}
+            </label>
+            {searchResults.map((r, i) => (
+              <button
+                key={i}
+                onClick={() => { onSelect(r.conversationId); setDeepSearch(false); setSearch(""); setSearchResults([]); }}
+                className="w-full text-left px-2 py-1.5 rounded border border-border hover:border-primary bg-muted/30 transition-colors"
+              >
+                <span className="text-[9px] font-mono text-primary truncate block">{r.conversationTitle}</span>
+                <span className="text-[8px] font-mono text-muted-foreground line-clamp-2">{r.messageContent.slice(0, 120)}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Date range filter */}
         {showDateFilter && (

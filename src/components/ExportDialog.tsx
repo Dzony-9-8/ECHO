@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, Download, FileText, FileJson, File } from "lucide-react";
+import { X, Download, FileText, FileJson, File, Copy } from "lucide-react";
 import { type ChatMessage } from "@/lib/api";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
@@ -204,7 +204,7 @@ const ExportDialog = ({ open, onClose, messages }: Props) => {
             </p>
 
             {/* Format buttons */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <button onClick={exportMarkdown} className="flex flex-col items-center gap-1.5 p-3 rounded border border-border hover:border-primary hover:bg-primary/5 transition-colors group">
                 <FileText className="w-5 h-5 text-muted-foreground group-hover:text-primary" />
                 <span className="text-[10px] font-mono text-muted-foreground group-hover:text-primary">Markdown</span>
@@ -216,6 +216,19 @@ const ExportDialog = ({ open, onClose, messages }: Props) => {
               <button onClick={exportPDF} className="flex flex-col items-center gap-1.5 p-3 rounded border border-border hover:border-terminal-amber hover:bg-terminal-amber/5 transition-colors group">
                 <File className="w-5 h-5 text-muted-foreground group-hover:text-terminal-amber" />
                 <span className="text-[10px] font-mono text-muted-foreground group-hover:text-terminal-amber">PDF</span>
+              </button>
+              <button onClick={() => {
+                if (filtered.length === 0) { toast.info("No messages to export"); return; }
+                const text = filtered.map(m => {
+                  const role = m.role === "user" ? "You" : (m.agent || "Assistant");
+                  return `[${role}]: ${m.content}`;
+                }).join("\n\n");
+                navigator.clipboard.writeText(text);
+                toast.success("Copied to clipboard");
+                onClose();
+              }} className="flex flex-col items-center gap-1.5 p-3 rounded border border-border hover:border-accent hover:bg-accent/5 transition-colors group">
+                <Copy className="w-5 h-5 text-muted-foreground group-hover:text-accent" />
+                <span className="text-[10px] font-mono text-muted-foreground group-hover:text-accent">Clipboard</span>
               </button>
             </div>
           </div>

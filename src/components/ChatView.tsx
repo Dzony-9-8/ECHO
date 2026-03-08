@@ -53,6 +53,7 @@ const ChatView = () => {
     saveMessage,
     pinnedIds,
     togglePin,
+    searchMessages,
   } = useConversations();
 
   const { logUsage } = useUsageAnalytics();
@@ -330,6 +331,7 @@ const ChatView = () => {
             onTogglePin={togglePin}
             systemPrompt={systemPrompt}
             onSystemPromptChange={setSystemPrompt}
+            onSearchMessages={searchMessages}
           />
         </div>
       )}
@@ -355,6 +357,7 @@ const ChatView = () => {
               onTogglePin={togglePin}
               systemPrompt={systemPrompt}
               onSystemPromptChange={setSystemPrompt}
+              onSearchMessages={searchMessages}
             />
           </div>
         </>

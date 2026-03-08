@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, Thermometer, Hash, FileText, Brain } from "lucide-react";
+import { X, Thermometer, Hash, FileText, Brain, Palette, Type, Scan } from "lucide-react";
 import {
   getChatSettings,
   saveChatSettings,
@@ -15,8 +15,27 @@ interface Props {
   onChange?: (settings: ChatSettings) => void;
 }
 
+const ACCENT_COLORS = [
+  { label: "Green", hsl: "142 70% 45%" },
+  { label: "Cyan", hsl: "185 60% 50%" },
+  { label: "Amber", hsl: "45 90% 50%" },
+  { label: "Violet", hsl: "280 60% 55%" },
+  { label: "Rose", hsl: "350 70% 55%" },
+  { label: "Blue", hsl: "210 70% 55%" },
+];
+
+const FONT_SIZES = [
+  { label: "XS", value: "12px" },
+  { label: "SM", value: "13px" },
+  { label: "MD", value: "14px" },
+  { label: "LG", value: "16px" },
+];
+
 const ChatSettingsModal = ({ open, onClose, onChange }: Props) => {
   const [settings, setSettings] = useState<ChatSettings>(getChatSettings);
+  const [accentColor, setAccentColor] = useState(() => localStorage.getItem("echo_accent") || "142 70% 45%");
+  const [fontSize, setFontSize] = useState(() => localStorage.getItem("echo_fontsize") || "14px");
+  const [scanlines, setScanlines] = useState(() => localStorage.getItem("echo_scanlines") !== "false");
 
   useEffect(() => {
     if (open) setSettings(getChatSettings());
@@ -27,6 +46,25 @@ const ChatSettingsModal = ({ open, onClose, onChange }: Props) => {
     setSettings(next);
     saveChatSettings(next);
     onChange?.(next);
+  };
+
+  const applyAccent = (hsl: string) => {
+    setAccentColor(hsl);
+    localStorage.setItem("echo_accent", hsl);
+    document.documentElement.style.setProperty("--primary", hsl);
+  };
+
+  const applyFontSize = (size: string) => {
+    setFontSize(size);
+    localStorage.setItem("echo_fontsize", size);
+    document.documentElement.style.setProperty("--chat-font-size", size);
+  };
+
+  const toggleScanlines = () => {
+    const next = !scanlines;
+    setScanlines(next);
+    localStorage.setItem("echo_scanlines", String(next));
+    document.documentElement.classList.toggle("no-scanlines", !next);
   };
 
   if (!open) return null;
@@ -164,6 +202,74 @@ const ChatSettingsModal = ({ open, onClose, onChange }: Props) => {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Appearance */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Palette className="w-3.5 h-3.5 text-terminal-magenta" />
+                <label className="text-[11px] font-mono text-foreground uppercase tracking-wider">
+                  Accent Color
+                </label>
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {ACCENT_COLORS.map((c) => (
+                  <button
+                    key={c.hsl}
+                    onClick={() => applyAccent(c.hsl)}
+                    className={`w-7 h-7 rounded-full border-2 transition-all ${
+                      accentColor === c.hsl ? "border-foreground scale-110" : "border-transparent"
+                    }`}
+                    style={{ backgroundColor: `hsl(${c.hsl})` }}
+                    title={c.label}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Font Size */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Type className="w-3.5 h-3.5 text-terminal-cyan" />
+                <label className="text-[11px] font-mono text-foreground uppercase tracking-wider">
+                  Font Size
+                </label>
+              </div>
+              <div className="flex gap-1.5">
+                {FONT_SIZES.map((f) => (
+                  <button
+                    key={f.value}
+                    onClick={() => applyFontSize(f.value)}
+                    className={`px-3 py-1.5 rounded text-[10px] font-mono border transition-colors ${
+                      fontSize === f.value
+                        ? "border-terminal-cyan text-terminal-cyan bg-terminal-cyan/10"
+                        : "border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Scanlines toggle */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Scan className="w-3.5 h-3.5 text-primary" />
+                <label className="text-[11px] font-mono text-foreground uppercase tracking-wider">
+                  Scanlines Effect
+                </label>
+              </div>
+              <button
+                onClick={toggleScanlines}
+                className={`px-3 py-1 rounded text-[10px] font-mono border transition-colors ${
+                  scanlines
+                    ? "border-primary text-primary bg-primary/10"
+                    : "border-border text-muted-foreground"
+                }`}
+              >
+                {scanlines ? "ON" : "OFF"}
+              </button>
             </div>
           </div>
 

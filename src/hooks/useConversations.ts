@@ -118,6 +118,38 @@ export const useConversations = () => {
     loadConversations();
   }, [loadConversations]);
 
+  // Search messages across all conversations
+  const searchMessages = useCallback(async (query: string): Promise<Array<{
+    conversationId: string;
+    conversationTitle: string;
+    messageContent: string;
+    messageRole: string;
+    messageAgent?: string;
+    createdAt: string;
+  }>> => {
+    if (!user || !query.trim()) return [];
+    const { data } = await supabase
+      .from("messages")
+      .select("id, content, role, agent, created_at, conversation_id")
+      .ilike("content", `%${query}%`)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (!data) return [];
+    
+    // Map conversation IDs to titles
+    const convMap = new Map(conversations.map(c => [c.id, c.title]));
+    return data
+      .filter(m => convMap.has(m.conversation_id))
+      .map(m => ({
+        conversationId: m.conversation_id,
+        conversationTitle: convMap.get(m.conversation_id) || "Unknown",
+        messageContent: m.content,
+        messageRole: m.role,
+        messageAgent: m.agent || undefined,
+        createdAt: m.created_at,
+      }));
+  }, [user, conversations]);
+
   return {
     conversations,
     activeConversationId,
@@ -129,5 +161,6 @@ export const useConversations = () => {
     loading,
     pinnedIds,
     togglePin,
+    searchMessages,
   };
 };

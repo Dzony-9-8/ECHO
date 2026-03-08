@@ -229,3 +229,13 @@
   background: hsl(var(--muted));
   font-weight: 600;
 }
+
+/* Scanline toggle */
+.no-scanlines .scanline {
+  display: none !important;
+}
+
+/* Custom chat font size */
+:root {
+  --chat-font-size: 14px;
+}

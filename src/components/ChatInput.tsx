@@ -74,6 +74,25 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     setIsListening(true);
   }, [isListening, speechSupported]);
 
+  // Auto-save draft
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (input.trim()) {
+        localStorage.setItem("echo_draft", input);
+      } else {
+        localStorage.removeItem("echo_draft");
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [input]);
+
+  // Load draft on mount
+  useEffect(() => {
+    const draft = localStorage.getItem("echo_draft");
+    if (draft && !input) setInput(draft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -109,6 +128,7 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     onSend(input.trim(), files.length > 0 ? files : undefined, depth, model);
     setInput("");
     setFiles([]);
+    localStorage.removeItem("echo_draft");
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
