@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Mic, Paperclip, X, Image, FileText, Layers } from "lucide-react";
+import { Send, Mic, MicOff, Paperclip, X, Image, FileText, Layers } from "lucide-react";
 import {
   type FileAttachment,
   getFileType,
@@ -22,9 +22,57 @@ const ChatInput = ({ onSend, disabled }: Props) => {
   const [isDragging, setIsDragging] = useState(false);
   const [depth, setDepth] = useState(1);
   const [model, setModel] = useState(getSelectedModel);
+  const [isListening, setIsListening] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
+
+  const speechSupported = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+
+  const toggleVoice = useCallback(() => {
+    if (isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+      return;
+    }
+    if (!speechSupported) return;
+
+    const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const recognition = new SpeechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    let finalTranscript = "";
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + " ";
+        } else {
+          interim = transcript;
+        }
+      }
+      setInput((prev) => {
+        const base = prev.replace(/\u200B.*$/, "").trimEnd();
+        const combined = (base ? base + " " : "") + finalTranscript + (interim ? "\u200B" + interim : "");
+        return combined;
+      });
+    };
+
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => {
+      setIsListening(false);
+      setInput((prev) => prev.replace(/\u200B/g, ""));
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true);
+  }, [isListening, speechSupported]);
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -229,12 +277,20 @@ const ChatInput = ({ onSend, disabled }: Props) => {
         >
           <Send className="w-4 h-4" />
         </button>
-        <button
-          className="p-2.5 rounded border border-terminal-cyan bg-terminal-cyan/10 text-terminal-cyan hover:bg-terminal-cyan/20 transition-colors opacity-50 cursor-not-allowed"
-          title="Voice input (requires backend)"
-        >
-          <Mic className="w-4 h-4" />
-        </button>
+        {speechSupported && (
+          <button
+            onClick={toggleVoice}
+            disabled={disabled}
+            className={`p-2.5 rounded border transition-colors ${
+              isListening
+                ? "border-terminal-red bg-terminal-red/20 text-terminal-red animate-pulse"
+                : "border-terminal-cyan bg-terminal-cyan/10 text-terminal-cyan hover:bg-terminal-cyan/20"
+            } disabled:opacity-30`}
+            title={isListening ? "Stop listening" : "Voice input"}
+          >
+            {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </button>
+        )}
       </div>
     </div>
   );
