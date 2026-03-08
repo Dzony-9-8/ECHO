@@ -17,6 +17,7 @@ export interface ChatMessage {
   model?: string;
   agent?: string;
   status?: "pending" | "streaming" | "complete" | "error";
+  files?: { name: string; type: "image" | "document"; preview?: string }[];
 }
 
 export interface AgentInfo {
