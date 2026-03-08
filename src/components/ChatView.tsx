@@ -56,14 +56,15 @@ const ChatView = () => {
       files: filesMeta,
     };
 
+    const mode = getBackendMode();
     const assistantMsg: ChatMessageType = {
       id: crypto.randomUUID(),
       role: "assistant",
       content: "",
       timestamp: new Date(),
       status: "streaming",
-      agent: "Supervisor",
-      model: "LLaMA 3.1",
+      agent: mode === "cloud" ? "ECHO Cloud" : "Supervisor",
+      model: mode === "cloud" ? "Gemini 3 Flash" : "LLaMA 3.1",
     };
 
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
