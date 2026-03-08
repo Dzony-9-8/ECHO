@@ -70,7 +70,7 @@ const Auth = () => {
   };
 
   return (
-    <div className="h-screen bg-background flex items-center justify-center relative overflow-hidden">
+    <main className="h-screen bg-background flex items-center justify-center relative overflow-hidden">
       {/* Scanline overlay */}
       <div className="absolute inset-0 scanline pointer-events-none" />
 
