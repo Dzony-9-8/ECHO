@@ -1,6 +1,7 @@
 import { Terminal, Zap, Wifi, WifiOff } from "lucide-react";
 import { useState, useEffect } from "react";
 import { checkHealth } from "@/lib/api";
+import SystemMetrics from "./SystemMetrics";
 
 interface Props {
   viewLabel?: string;
@@ -28,11 +29,9 @@ const TopBar = ({ viewLabel }: Props) => {
         {viewLabel || "Local AI Orchestration System"}
       </span>
       <div className="flex-1" />
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1.5 text-[10px] text-terminal-amber font-mono">
-          <Zap className="w-3 h-3" />
-          GTX 1080 Ti
-        </div>
+      <div className="flex items-center gap-4">
+        <SystemMetrics />
+        <div className="w-px h-4 bg-border" />
         <div className={`flex items-center gap-1 text-[10px] font-mono ${online ? "text-primary" : "text-terminal-red"}`}>
           {online ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
           {online ? "ONLINE" : "OFFLINE"}
