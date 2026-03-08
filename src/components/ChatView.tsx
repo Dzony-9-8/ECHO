@@ -264,7 +264,7 @@ const ChatView = () => {
 
       <div className="flex-1 flex flex-col relative">
         {/* Agent filter bar */}
-        <div className="border-b border-border bg-card px-4 py-2 flex items-center gap-2 z-20 overflow-visible">
+        <div className="border-b border-border bg-card px-4 py-2 flex items-center gap-2 z-20 overflow-visible flex-wrap">
           <button
             onClick={() => setShowHistory(!showHistory)}
             className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-widest font-mono mr-2 flex-shrink-0"
@@ -287,7 +287,7 @@ const ChatView = () => {
               {agent}
             </button>
           ))}
-          <div className="flex-1" />
+          <div className="flex-1 min-w-[8px]" />
           {/* Export */}
           <div className="relative flex-shrink-0">
             <button
@@ -298,21 +298,25 @@ const ChatView = () => {
               Export
             </button>
             {showExport && (
-              <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded shadow-lg z-50 py-1 w-32">
-                <button onClick={() => { handleExport("md"); setShowExport(false); }} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
-                  Markdown (.md)
-                </button>
-                <button onClick={() => { handleExport("json"); setShowExport(false); }} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
-                  JSON (.json)
-                </button>
-              </div>
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowExport(false)} />
+                <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded shadow-lg z-50 py-1 w-32">
+                  <button onClick={() => { handleExport("md"); setShowExport(false); }} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
+                    Markdown (.md)
+                  </button>
+                  <button onClick={() => { handleExport("json"); setShowExport(false); }} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
+                    JSON (.json)
+                  </button>
+                </div>
+              </>
             )}
           </div>
+          <span className="text-border mx-1 flex-shrink-0 hidden sm:inline">|</span>
           <button
             onClick={() => setShowPanel(!showPanel)}
             className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-widest font-mono flex-shrink-0"
           >
-            {showPanel ? "Hide Panel" : "Show Panel"}
+            {showPanel ? "Hide Panel ▶" : "◀ Panel"}
           </button>
         </div>
 
