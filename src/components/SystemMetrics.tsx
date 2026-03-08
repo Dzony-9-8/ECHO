@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
-import { Cpu, Activity, MonitorSpeaker, MemoryStick, Settings, Save, RotateCcw, Thermometer } from "lucide-react";
-import { fetchSystemMetrics, getBackendMode, type RealSystemMetrics } from "@/lib/api";
+import { useState, useEffect, useCallback } from "react";
+import { Cpu, Activity, MonitorSpeaker, MemoryStick, Settings, Save, RotateCcw, Thermometer, HardDrive, Wifi } from "lucide-react";
+import { fetchSystemMetrics, getBackendMode, measureCloudLatency, type RealSystemMetrics } from "@/lib/api";
 
 /* ─── Types ─── */
 interface BrowserInfo {
@@ -24,7 +24,6 @@ type MetricSource = "local" | "override" | "browser";
 
 /* ─── Helpers ─── */
 
-/** Returns a color based on usage percentage: green < 60%, amber 60-85%, red > 85% */
 const usageColor = (percent: number): string => {
   if (percent >= 85) return "hsl(var(--terminal-red))";
   if (percent >= 60) return "hsl(var(--terminal-amber))";
@@ -37,7 +36,6 @@ const usageTextClass = (percent: number): string => {
   return "text-primary";
 };
 
-/** Returns a color for GPU temperature: green < 65°C, amber 65-80°C, red > 80°C */
 const tempColor = (tempC: number): string => {
   if (tempC >= 80) return "hsl(var(--terminal-red))";
   if (tempC >= 65) return "hsl(var(--terminal-amber))";
@@ -47,6 +45,12 @@ const tempColor = (tempC: number): string => {
 const tempTextClass = (tempC: number): string => {
   if (tempC >= 80) return "text-terminal-red";
   if (tempC >= 65) return "text-terminal-amber";
+  return "text-primary";
+};
+
+const latencyTextClass = (ms: number): string => {
+  if (ms >= 500) return "text-terminal-red";
+  if (ms >= 200) return "text-terminal-amber";
   return "text-primary";
 };
 
@@ -144,22 +148,35 @@ const SystemMetrics = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [editOverrides, setEditOverrides] = useState<ManualOverrides>({});
   const [source, setSource] = useState<MetricSource>("browser");
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
 
-  // Poll local backend for real metrics
-  useEffect(() => {
-    let active = true;
-    const poll = async () => {
+  // Poll local backend for real metrics — only in local mode
+  const poll = useCallback(async () => {
+    const mode = getBackendMode();
+    setHeapUsage(getJSHeapUsage());
+
+    if (mode === "local") {
       const data = await fetchSystemMetrics();
-      if (!active) return;
       setRealMetrics(data);
       if (data) setSource("local");
       else if (Object.keys(overrides).length > 0) setSource("override");
       else setSource("browser");
-    };
-    poll();
-    const interval = setInterval(() => { poll(); setHeapUsage(getJSHeapUsage()); }, 3000);
-    return () => { active = false; clearInterval(interval); };
+      setLatencyMs(null);
+    } else {
+      // Cloud mode: no local metrics, measure cloud latency instead
+      setRealMetrics(null);
+      if (Object.keys(overrides).length > 0) setSource("override");
+      else setSource("browser");
+      const ping = await measureCloudLatency();
+      setLatencyMs(ping);
+    }
   }, [overrides]);
+
+  useEffect(() => {
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, [poll]);
 
   const handleSaveOverrides = () => {
     const cleaned: ManualOverrides = {};
@@ -190,15 +207,15 @@ const SystemMetrics = () => {
   const gpuUsage = realMetrics?.gpu?.gpu_usage_percent ?? null;
   const gpuTemp = realMetrics?.gpu?.temperature_c ?? null;
 
+  const disk = realMetrics?.disk ?? null;
+
   const gpuShort = gpuName ? gpuName.replace(/ANGLE \(/, "").replace(/\)$/, "").split(",")[0].trim() : "N/A";
 
   const isLive = source === "local";
   const sourceLabel = isLive ? "⚡ Live" : source === "override" ? "✏ Override" : "🌐 Browser";
   const sourceColor = isLive ? "text-primary" : source === "override" ? "text-terminal-amber" : "text-muted-foreground";
 
-  // Top-bar compact usage indicators
   const cpuPctDisplay = cpuUsage !== null ? Math.round(cpuUsage) : null;
-  const ramPctDisplay = ramPercent !== null ? Math.round(ramPercent) : null;
 
   return (
     <div className="relative">
@@ -216,7 +233,7 @@ const SystemMetrics = () => {
         {/* RAM */}
         <span className="flex items-center gap-1">
           <MemoryStick className="w-3 h-3 text-terminal-amber" />
-          <span className={ramPctDisplay !== null ? usageTextClass(ramPctDisplay) : "text-terminal-amber"}>
+          <span className="text-terminal-amber">
             {ramUsedGB !== null && ramTotalGB ? `${ramUsedGB.toFixed(1)}/${ramTotalGB}GB` : ramTotalGB ? `${ramTotalGB}GB` : "N/A"}
           </span>
         </span>
@@ -227,6 +244,13 @@ const SystemMetrics = () => {
             <span className="text-terminal-magenta">
               {vramUsedMB !== null ? `${(vramUsedMB / 1024).toFixed(1)}/${(vramTotalMB / 1024).toFixed(0)}GB` : `${(vramTotalMB / 1024).toFixed(0)}GB`}
             </span>
+          </span>
+        )}
+        {/* Latency in top bar (cloud mode) */}
+        {latencyMs !== null && (
+          <span className={`flex items-center gap-0.5 ${latencyTextClass(latencyMs)}`}>
+            <Wifi className="w-3 h-3" />
+            {latencyMs}ms
           </span>
         )}
         {/* CPU Temp in top bar when live */}
@@ -246,7 +270,7 @@ const SystemMetrics = () => {
       </button>
 
       {expanded && (
-        <div className="absolute top-8 right-0 w-80 border border-border bg-card rounded p-3 z-30 shadow-lg">
+        <div className="absolute top-8 right-0 w-80 border border-border bg-card rounded p-3 z-30 shadow-lg max-h-[80vh] overflow-y-auto">
           {/* Header */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -260,6 +284,17 @@ const SystemMetrics = () => {
               </button>
             </div>
           </div>
+
+          {/* Network Latency (cloud mode) */}
+          {latencyMs !== null && (
+            <div className="mb-3 flex items-center gap-2 p-1.5 rounded border border-border bg-muted/30">
+              <Wifi className={`w-3.5 h-3.5 ${latencyTextClass(latencyMs)}`} />
+              <div className="flex-1 flex justify-between text-[10px] font-mono">
+                <span className={latencyTextClass(latencyMs)}>Cloud Latency</span>
+                <span className={`font-bold ${latencyTextClass(latencyMs)}`}>{latencyMs}ms</span>
+              </div>
+            </div>
+          )}
 
           {/* Settings panel */}
           {showSettings && (
@@ -353,12 +388,10 @@ const SystemMetrics = () => {
               </div>
               <p className="text-[10px] text-foreground font-mono break-words mb-1.5">{gpuShort || "Not detected"}</p>
 
-              {/* GPU Usage bar */}
               {gpuUsage !== null && (
                 <UsageBar percent={gpuUsage} label="GPU Load" detail={`${Math.round(gpuUsage)}%`} />
               )}
 
-              {/* VRAM Usage bar */}
               {vramUsedMB !== null && vramTotalMB && (
                 <div className="mt-2">
                   <UsageBar
@@ -369,7 +402,6 @@ const SystemMetrics = () => {
                 </div>
               )}
 
-              {/* GPU Temperature */}
               {gpuTemp !== null && (
                 <div className="mt-2 flex items-center gap-2 p-1.5 rounded border border-border bg-muted/30">
                   <Thermometer className={`w-3.5 h-3.5 ${tempTextClass(gpuTemp)}`} />
@@ -388,13 +420,24 @@ const SystemMetrics = () => {
                 </div>
               )}
 
-              {/* Fallback when no live GPU data */}
               {gpuUsage === null && vramUsedMB === null && gpuTemp === null && (
                 <div className="h-2 bg-muted rounded-full overflow-hidden">
                   <div className="h-full rounded-full bg-muted-foreground/20" style={{ width: "0%" }} />
                 </div>
               )}
             </div>
+
+            {/* Disk Usage (local only) */}
+            {disk && (
+              <div>
+                <UsageBar
+                  percent={disk.usage_percent}
+                  label="Disk"
+                  detail={`${disk.used_gb} / ${disk.total_gb} GB`}
+                />
+                <div className="text-[9px] text-muted-foreground mt-0.5 font-mono">{disk.free_gb} GB free</div>
+              </div>
+            )}
 
             {/* System Details */}
             <div className="pt-2 border-t border-border space-y-1">

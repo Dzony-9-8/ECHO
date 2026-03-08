@@ -69,9 +69,30 @@ export interface RealSystemMetrics {
     gpu_usage_percent: number;
     temperature_c: number | null;
   } | null;
+  disk: {
+    total_gb: number;
+    used_gb: number;
+    free_gb: number;
+    usage_percent: number;
+  } | null;
   platform: string;
   hostname: string;
 }
+
+// Measure cloud backend latency (ms)
+export const measureCloudLatency = async (): Promise<number | null> => {
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
+  try {
+    const start = performance.now();
+    await fetch(url, {
+      method: "OPTIONS",
+      signal: AbortSignal.timeout(5000),
+    });
+    return Math.round(performance.now() - start);
+  } catch {
+    return null;
+  }
+};
 
 // Fetch real system metrics from local backend
 export const fetchSystemMetrics = async (): Promise<RealSystemMetrics | null> => {

@@ -47,6 +47,38 @@ def get_gpu_info() -> dict | None:
         return None
 
 
+def get_cpu_temp() -> float | None:
+    """Try to read CPU temperature via psutil."""
+    try:
+        temps = psutil.sensors_temperatures()
+        if not temps:
+            return None
+        for key in ("coretemp", "k10temp", "cpu_thermal", "cpu-thermal"):
+            if key in temps and temps[key]:
+                return round(temps[key][0].current, 1)
+        # Fallback: first available sensor
+        for sensors in temps.values():
+            if sensors:
+                return round(sensors[0].current, 1)
+    except (AttributeError, Exception):
+        pass
+    return None
+
+
+def get_disk_info() -> dict:
+    """Get disk usage for the root partition."""
+    try:
+        usage = psutil.disk_usage("/")
+        return {
+            "total_gb": round(usage.total / (1024 ** 3), 1),
+            "used_gb": round(usage.used / (1024 ** 3), 1),
+            "free_gb": round(usage.free / (1024 ** 3), 1),
+            "usage_percent": usage.percent,
+        }
+    except Exception:
+        return None
+
+
 @app.get("/api/system")
 def system_metrics():
     """
@@ -55,32 +87,13 @@ def system_metrics():
     """
     vm = psutil.virtual_memory()
 
-    # CPU temperature
-    cpu_temp = None
-    try:
-        temps = psutil.sensors_temperatures()
-        if temps:
-            # Try common sensor names
-            for key in ("coretemp", "k10temp", "cpu_thermal", "cpu-thermal"):
-                if key in temps and temps[key]:
-                    cpu_temp = temps[key][0].current
-                    break
-            # Fallback: first available sensor
-            if cpu_temp is None:
-                for sensors in temps.values():
-                    if sensors:
-                        cpu_temp = sensors[0].current
-                        break
-    except (AttributeError, Exception):
-        pass  # sensors_temperatures not available on all platforms
-
     return {
         "cpu": {
             "name": platform.processor() or platform.machine(),
             "cores": psutil.cpu_count(logical=False) or psutil.cpu_count(),
             "threads": psutil.cpu_count(logical=True),
             "usage_percent": psutil.cpu_percent(interval=0.1),
-            "temperature_c": round(cpu_temp, 1) if cpu_temp is not None else None,
+            "temperature_c": get_cpu_temp(),
         },
         "ram": {
             "total_gb": round(vm.total / (1024 ** 3), 1),
@@ -88,6 +101,7 @@ def system_metrics():
             "usage_percent": vm.percent,
         },
         "gpu": get_gpu_info(),
+        "disk": get_disk_info(),
         "platform": platform.system(),
         "hostname": socket.gethostname(),
     }
