@@ -55,7 +55,7 @@ const ChatView = () => {
     togglePin,
   } = useConversations();
 
-  // Total token count for conversation
+  const { logUsage } = useUsageAnalytics();
   const totalTokens = useMemo(
     () => messages.filter(m => m.id !== "welcome").reduce((sum, m) => sum + estimateTokens(m.content), 0),
     [messages]
