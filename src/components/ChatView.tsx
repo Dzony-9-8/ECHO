@@ -245,7 +245,11 @@ const ChatView = () => {
           model: assistantMsg.model,
         });
       }
-    } catch (err: any) {
+
+      // Log usage analytics
+      const totalMsgTokens = estimateTokens(userMsg.content) + estimateTokens(finalContent);
+      const latency = Date.now() - assistantMsg.timestamp.getTime();
+      logUsage(assistantMsg.model || "unknown", totalMsgTokens, latency, convId || undefined);
       const errMsg = err?.message || "Connection failed";
 
       if (errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit")) {
