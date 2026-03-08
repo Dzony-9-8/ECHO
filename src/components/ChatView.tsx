@@ -6,10 +6,13 @@ import { type ChatMessage as ChatMessageType, sendMessage, getBackendMode } from
 import { type FileAttachment } from "@/lib/files";
 import { useConversations } from "@/hooks/useConversations";
 import ConversationList from "@/components/ConversationList";
-import { Download, Menu, X, MessageSquareText } from "lucide-react";
+import ChatSettingsModal from "@/components/ChatSettingsModal";
+import ExportDialog from "@/components/ExportDialog";
+import { Menu, X, MessageSquareText, Settings, Download, ArrowLeft, GitBranch } from "lucide-react";
 import { toast } from "sonner";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { estimateTokens, formatTokenCount } from "@/lib/tokens";
+import { saveBranch, getParentBranch } from "@/lib/branches";
 
 const WELCOME_MSG: ChatMessageType = {
   id: "welcome",
@@ -26,6 +29,7 @@ const ChatView = () => {
   const [showPanel, setShowPanel] = useState(true);
   const [showHistory, setShowHistory] = useState(true);
   const [showExport, setShowExport] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showMobileHistory, setShowMobileHistory] = useState(false);
   const [showMobilePanel, setShowMobilePanel] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState(
@@ -52,6 +56,12 @@ const ChatView = () => {
   const totalTokens = useMemo(
     () => messages.filter(m => m.id !== "welcome").reduce((sum, m) => sum + estimateTokens(m.content), 0),
     [messages]
+  );
+
+  // Check if current conversation is a branch
+  const parentBranch = useMemo(
+    () => activeConversationId ? getParentBranch(activeConversationId) : undefined,
+    [activeConversationId]
   );
 
   const handleSelectConversation = useCallback(async (id: string) => {
@@ -89,53 +99,6 @@ const ChatView = () => {
     (m) => !m.agent || m.agent === "System" || m.agent === "ECHO Cloud" || activeAgents.has(m.agent)
   );
 
-  // Export conversation
-  const handleExport = (format: "md" | "json") => {
-    const exportMessages = messages.filter((m) => m.id !== "welcome");
-    if (exportMessages.length === 0) {
-      toast.info("No messages to export");
-      return;
-    }
-
-    let content: string;
-    let filename: string;
-    const timestamp = new Date().toISOString().slice(0, 10);
-
-    if (format === "json") {
-      content = JSON.stringify(
-        exportMessages.map((m) => ({
-          role: m.role,
-          content: m.content,
-          agent: m.agent,
-          model: m.model,
-          timestamp: m.timestamp.toISOString(),
-        })),
-        null,
-        2
-      );
-      filename = `echo-chat-${timestamp}.json`;
-    } else {
-      content = exportMessages
-        .map((m) => {
-          const role = m.role === "user" ? "**You**" : `**${m.agent || "Assistant"}**`;
-          return `### ${role}\n_${m.timestamp.toLocaleString()}_\n\n${m.content}`;
-        })
-        .join("\n\n---\n\n");
-      content = `# ECHO Chat Export — ${timestamp}\n\n${content}`;
-      filename = `echo-chat-${timestamp}.md`;
-    }
-
-    const blob = new Blob([content], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(`Exported as ${filename}`);
-    setShowExport(false);
-  };
-
   // Edit message & resend
   const handleEditMessage = async (id: string, newContent: string) => {
     const idx = messages.findIndex((m) => m.id === id);
@@ -156,6 +119,55 @@ const ChatView = () => {
     const trimmed = messages.slice(0, idx);
     setMessages(trimmed);
     await doSend(lastUserMsg.content, trimmed.slice(0, -1), undefined, undefined);
+  };
+
+  // Branch from a message
+  const handleBranch = async (messageId: string) => {
+    const idx = messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return;
+
+    // Take messages up to and including the branch point
+    const branchMessages = messages.slice(0, idx + 1);
+    const branchTitle = `Branch: ${branchMessages[branchMessages.length - 1].content.slice(0, 40)}...`;
+
+    // Create a new conversation for the branch
+    const newConvId = await createConversation(branchTitle);
+    if (!newConvId) return;
+
+    // Save branch metadata
+    saveBranch({
+      conversationId: newConvId,
+      parentConversationId: activeConversationId || "",
+      branchMessageId: messageId,
+      title: branchTitle,
+      createdAt: new Date().toISOString(),
+    });
+
+    // Save all messages up to branch point into new conversation
+    for (const msg of branchMessages.filter(m => m.id !== "welcome")) {
+      await saveMessage(newConvId, {
+        role: msg.role,
+        content: msg.content,
+        agent: msg.agent,
+        model: msg.model,
+      });
+    }
+
+    // Switch to the new branch
+    setActiveConversationId(newConvId);
+    setMessages(branchMessages);
+    toast.success("Branch created — continue the conversation from here");
+  };
+
+  const handleSelectBranch = (conversationId: string) => {
+    handleSelectConversation(conversationId);
+  };
+
+  // Navigate to parent branch
+  const handleGoToParent = () => {
+    if (parentBranch) {
+      handleSelectConversation(parentBranch.parentConversationId);
+    }
   };
 
   const doSend = async (
@@ -266,6 +278,7 @@ const ChatView = () => {
     onToggleHistory: () => setShowHistory((v) => !v),
     onEscape: () => {
       setShowExport(false);
+      setShowSettings(false);
       setShowMobileHistory(false);
       setShowMobilePanel(false);
     },
@@ -333,6 +346,10 @@ const ChatView = () => {
         </>
       )}
 
+      {/* Modals */}
+      <ChatSettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
+      <ExportDialog open={showExport} onClose={() => setShowExport(false)} messages={messages} />
+
       <div className="flex-1 flex flex-col relative">
         {/* Compact filter bar */}
         <div className="border-b border-border bg-card px-3 py-1.5 flex items-center gap-1.5 z-20 overflow-visible">
@@ -351,6 +368,19 @@ const ChatView = () => {
           >
             {showHistory ? "◀" : "▶"}
           </button>
+
+          {/* Branch indicator */}
+          {parentBranch && (
+            <button
+              onClick={handleGoToParent}
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono border border-accent text-accent bg-accent/10 hover:bg-accent/20 transition-colors"
+              title="Go to parent conversation"
+            >
+              <ArrowLeft className="w-3 h-3" />
+              <GitBranch className="w-3 h-3" />
+              <span className="hidden sm:inline">Branch</span>
+            </button>
+          )}
 
           <span className="text-border hidden sm:inline">|</span>
 
@@ -380,34 +410,27 @@ const ChatView = () => {
             </span>
           )}
 
+          {/* Settings */}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+            title="Chat Settings"
+          >
+            <Settings className="w-3.5 h-3.5" />
+          </button>
+
           {/* Export */}
-          <div className="relative flex-shrink-0">
-            <button
-              onClick={() => setShowExport(!showExport)}
-              className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
-              title="Export (Ctrl+E)"
-            >
-              <Download className="w-3.5 h-3.5" />
-            </button>
-            {showExport && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowExport(false)} />
-                <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded shadow-lg z-50 py-1 w-32">
-                  <button onClick={() => handleExport("md")} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
-                    Markdown (.md)
-                  </button>
-                  <button onClick={() => handleExport("json")} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
-                    JSON (.json)
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+          <button
+            onClick={() => setShowExport(true)}
+            className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+            title="Export (Ctrl+E)"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </button>
 
           {/* Panel toggle */}
           <button
             onClick={() => {
-              // Desktop: toggle inline panel; Mobile: open overlay
               if (window.innerWidth >= 1024) {
                 setShowPanel(!showPanel);
               } else {
@@ -433,6 +456,8 @@ const ChatView = () => {
                 message={msg}
                 onEdit={msg.id !== "welcome" ? handleEditMessage : undefined}
                 onRegenerate={msg.id !== "welcome" ? handleRegenerate : undefined}
+                onBranch={msg.id !== "welcome" ? handleBranch : undefined}
+                onSelectBranch={handleSelectBranch}
               />
             ))}
             <div ref={messagesEndRef} />

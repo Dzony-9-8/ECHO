@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { MessageSquare, Plus, Trash2, Search, Pin, PinOff, Settings2 } from "lucide-react";
+import { useState, useMemo } from "react";
+import { MessageSquare, Plus, Trash2, Search, Pin, PinOff, Settings2, Calendar, GitBranch } from "lucide-react";
 import type { Conversation } from "@/hooks/useConversations";
+import { getParentBranch, getBranchesForConversation } from "@/lib/branches";
 
 interface Props {
   conversations: Conversation[];
@@ -26,11 +27,42 @@ const ConversationList = ({
   onSystemPromptChange,
 }: Props) => {
   const [search, setSearch] = useState("");
+  const [useRegex, setUseRegex] = useState(false);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [showDateFilter, setShowDateFilter] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
-  const filtered = search
-    ? conversations.filter((c) => c.title.toLowerCase().includes(search.toLowerCase()))
-    : conversations;
+  const filtered = useMemo(() => {
+    let result = conversations;
+
+    // Text / regex filter
+    if (search) {
+      if (useRegex) {
+        try {
+          const re = new RegExp(search, "i");
+          result = result.filter((c) => re.test(c.title));
+        } catch {
+          // Invalid regex — fall back to plain search
+          result = result.filter((c) => c.title.toLowerCase().includes(search.toLowerCase()));
+        }
+      } else {
+        result = result.filter((c) => c.title.toLowerCase().includes(search.toLowerCase()));
+      }
+    }
+
+    // Date range filter
+    if (dateFrom) {
+      const from = new Date(dateFrom);
+      result = result.filter((c) => new Date(c.created_at) >= from);
+    }
+    if (dateTo) {
+      const to = new Date(dateTo + "T23:59:59");
+      result = result.filter((c) => new Date(c.created_at) <= to);
+    }
+
+    return result;
+  }, [conversations, search, useRegex, dateFrom, dateTo]);
 
   // Sort: pinned first, then by date
   const sorted = [...filtered].sort((a, b) => {
@@ -84,19 +116,76 @@ const ConversationList = ({
           </div>
         )}
 
-        <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search chats..."
-            className="w-full bg-input border border-border rounded pl-7 pr-2 py-1.5 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary font-mono"
-          />
+        {/* Search bar with regex toggle */}
+        <div className="relative flex gap-1">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={useRegex ? "Regex pattern..." : "Search chats..."}
+              className="w-full bg-input border border-border rounded pl-7 pr-2 py-1.5 text-[10px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary font-mono"
+            />
+          </div>
+          <button
+            onClick={() => setUseRegex(!useRegex)}
+            className={`px-1.5 rounded border text-[9px] font-mono transition-colors ${
+              useRegex
+                ? "border-terminal-cyan text-terminal-cyan bg-terminal-cyan/10"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+            title="Toggle regex search"
+          >
+            .*
+          </button>
+          <button
+            onClick={() => setShowDateFilter(!showDateFilter)}
+            className={`p-1.5 rounded border transition-colors ${
+              showDateFilter || dateFrom || dateTo
+                ? "border-terminal-amber text-terminal-amber bg-terminal-amber/10"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+            title="Date filter"
+          >
+            <Calendar className="w-3 h-3" />
+          </button>
         </div>
+
+        {/* Date range filter */}
+        {showDateFilter && (
+          <div className="space-y-1">
+            <label className="text-[9px] uppercase tracking-widest text-terminal-amber font-mono">Date Range</label>
+            <div className="flex gap-1">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="flex-1 bg-input border border-border rounded px-1.5 py-1 text-[9px] font-mono text-foreground focus:outline-none focus:border-terminal-amber"
+              />
+              <span className="text-[9px] text-muted-foreground self-center">→</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="flex-1 bg-input border border-border rounded px-1.5 py-1 text-[9px] font-mono text-foreground focus:outline-none focus:border-terminal-amber"
+              />
+            </div>
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(""); setDateTo(""); }}
+                className="text-[8px] font-mono text-terminal-red hover:underline"
+              >
+                Clear dates
+              </button>
+            )}
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto py-1">
         {sorted.map((conv) => {
           const isPinned = pinnedIds.has(conv.id);
+          const parentBranch = getParentBranch(conv.id);
+          const childBranches = getBranchesForConversation(conv.id);
           return (
             <div
               key={conv.id}
@@ -109,10 +198,19 @@ const ConversationList = ({
             >
               {isPinned ? (
                 <Pin className="w-3 h-3 flex-shrink-0 text-terminal-amber" />
+              ) : parentBranch ? (
+                <GitBranch className="w-3 h-3 flex-shrink-0 text-accent" />
               ) : (
                 <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />
               )}
-              <span className="flex-1 truncate">{conv.title}</span>
+              <div className="flex-1 min-w-0">
+                <span className="block truncate">{conv.title}</span>
+                {childBranches.length > 0 && (
+                  <span className="text-[8px] text-accent">
+                    {childBranches.length} branch{childBranches.length > 1 ? "es" : ""}
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                 {onTogglePin && (
                   <button
@@ -141,7 +239,7 @@ const ConversationList = ({
         })}
         {sorted.length === 0 && (
           <p className="text-[10px] text-muted-foreground text-center py-4 font-mono">
-            {search ? "No matches" : "No conversations yet"}
+            {search || dateFrom || dateTo ? "No matches" : "No conversations yet"}
           </p>
         )}
       </div>
