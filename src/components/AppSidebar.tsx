@@ -12,11 +12,12 @@ import {
   BarChart3,
   BookOpen,
   FileText,
+  Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
 
-export type ViewType = "chat" | "workflow" | "memory" | "telemetry" | "research" | "analytics" | "prompts" | "rag";
+export type ViewType = "chat" | "workflow" | "memory" | "telemetry" | "research" | "analytics" | "prompts" | "rag" | "skills";
 
 interface Props {
   activeView: ViewType;
@@ -32,6 +33,7 @@ const navItems: { id: ViewType; icon: typeof MessageSquare; label: string; color
   { id: "analytics", icon: BarChart3, label: "Analytics", color: "text-primary" },
   { id: "prompts", icon: BookOpen, label: "Prompts", color: "text-terminal-magenta" },
   { id: "rag", icon: FileText, label: "RAG", color: "text-terminal-cyan" },
+  { id: "skills", icon: Zap, label: "Skills", color: "text-terminal-amber" },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {

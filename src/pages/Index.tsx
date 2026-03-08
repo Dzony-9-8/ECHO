@@ -10,6 +10,7 @@ const ResearchView = lazy(() => import("@/components/ResearchView"));
 const AnalyticsDashboard = lazy(() => import("@/components/AnalyticsDashboard"));
 const PromptLibraryPanel = lazy(() => import("@/components/PromptLibraryPanel"));
 const RAGPanel = lazy(() => import("@/components/RAGPanel"));
+const AgentSkillsPanel = lazy(() => import("@/components/AgentSkillsPanel"));
 
 const LazyFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -29,6 +30,7 @@ const Index = () => {
     analytics: "Usage Analytics",
     prompts: "Prompt Library",
     rag: "Knowledge Base",
+    skills: "Agent Skills",
   };
 
   const handlePromptSelect = (prompt: string) => {
@@ -50,6 +52,7 @@ const Index = () => {
           {activeView === "analytics" && <AnalyticsDashboard />}
           {activeView === "prompts" && <PromptLibraryPanel onSelect={handlePromptSelect} />}
           {activeView === "rag" && <RAGPanel />}
+          {activeView === "skills" && <AgentSkillsPanel />}
         </Suspense>
       </main>
     </div>
