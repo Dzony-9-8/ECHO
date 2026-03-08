@@ -330,6 +330,7 @@ const ChatView = () => {
       );
     } finally {
       setIsStreaming(false);
+      setAgentComplete(assistantMsg.agent || "ECHO Cloud");
     }
   };
 
