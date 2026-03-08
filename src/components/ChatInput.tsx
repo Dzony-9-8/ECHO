@@ -39,7 +39,7 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     if (!speechSupported) return;
 
     const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognitionCtor() as SpeechRecognition;
+    const recognition = new SpeechRecognitionCtor();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
