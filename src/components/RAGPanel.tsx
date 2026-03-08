@@ -1,20 +1,33 @@
 import { useState } from "react";
-import { Search, Upload, Trash2, FileText, Plus, X } from "lucide-react";
+import { Search, Upload, Trash2, FileText, Plus, X, Brain, Zap } from "lucide-react";
 import { useDocuments, type Document } from "@/hooks/useDocuments";
 import { toast } from "sonner";
 
 const RAGPanel = () => {
-  const { documents, loading, addDocument, removeDocument, searchDocuments } = useDocuments();
+  const { documents, loading, addDocument, removeDocument, searchDocuments, semanticSearch } = useDocuments();
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<Document[] | null>(null);
+  const [semanticResults, setSemanticResults] = useState<{ id: string; score: number; reason: string }[] | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
+  const [searchMode, setSearchMode] = useState<"keyword" | "semantic">("keyword");
+  const [isSearching, setIsSearching] = useState(false);
 
   const handleSearch = async () => {
-    if (!search.trim()) { setResults(null); return; }
-    const r = await searchDocuments(search);
-    setResults(r);
+    if (!search.trim()) { setResults(null); setSemanticResults(null); return; }
+    setIsSearching(true);
+    
+    if (searchMode === "semantic") {
+      const ranked = await semanticSearch(search);
+      setSemanticResults(ranked);
+      setResults(null);
+    } else {
+      const r = await searchDocuments(search);
+      setResults(r);
+      setSemanticResults(null);
+    }
+    setIsSearching(false);
   };
 
   const handleAdd = async () => {
@@ -42,7 +55,24 @@ const RAGPanel = () => {
     e.target.value = "";
   };
 
-  const displayDocs = results !== null ? results : documents;
+  const clearSearch = () => {
+    setResults(null);
+    setSemanticResults(null);
+    setSearch("");
+  };
+
+  // For semantic results, map back to documents
+  const semanticDocs = semanticResults
+    ? semanticResults
+        .map((r) => {
+          const doc = documents.find((d) => d.id === r.id);
+          return doc ? { ...doc, score: r.score, reason: r.reason } : null;
+        })
+        .filter(Boolean) as (Document & { score: number; reason: string })[]
+    : null;
+
+  const displayDocs = semanticDocs || (results !== null ? results : documents);
+  const hasActiveSearch = results !== null || semanticResults !== null;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -87,6 +117,26 @@ const RAGPanel = () => {
           </div>
         )}
 
+        {/* Search mode toggle */}
+        <div className="flex gap-1">
+          <button
+            onClick={() => setSearchMode("keyword")}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-mono border transition-colors ${
+              searchMode === "keyword" ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground"
+            }`}
+          >
+            <Zap className="w-2.5 h-2.5" /> Keyword
+          </button>
+          <button
+            onClick={() => setSearchMode("semantic")}
+            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-mono border transition-colors ${
+              searchMode === "semantic" ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground"
+            }`}
+          >
+            <Brain className="w-2.5 h-2.5" /> AI Semantic
+          </button>
+        </div>
+
         {/* Search */}
         <div className="flex gap-1">
           <div className="relative flex-1">
@@ -95,58 +145,87 @@ const RAGPanel = () => {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              placeholder="Search documents..."
+              placeholder={searchMode === "semantic" ? "Ask a question about your documents..." : "Search documents..."}
               className="w-full bg-input border border-border rounded pl-7 pr-2 py-1.5 text-[10px] font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
             />
           </div>
-          <button onClick={handleSearch} className="px-2 py-1 rounded border border-primary text-primary text-[10px] font-mono hover:bg-primary/10">Search</button>
-          {results !== null && (
-            <button onClick={() => { setResults(null); setSearch(""); }} className="p-1 rounded text-muted-foreground hover:text-foreground">
+          <button
+            onClick={handleSearch}
+            disabled={isSearching}
+            className={`px-2 py-1 rounded border text-[10px] font-mono transition-colors ${
+              searchMode === "semantic"
+                ? "border-accent text-accent hover:bg-accent/10"
+                : "border-primary text-primary hover:bg-primary/10"
+            } disabled:opacity-50`}
+          >
+            {isSearching ? "..." : "Search"}
+          </button>
+          {hasActiveSearch && (
+            <button onClick={clearSearch} className="p-1 rounded text-muted-foreground hover:text-foreground">
               <X className="w-3 h-3" />
             </button>
           )}
         </div>
 
-        {results !== null && (
-          <p className="text-[9px] font-mono text-terminal-cyan">{results.length} result{results.length !== 1 ? "s" : ""} found</p>
+        {hasActiveSearch && (
+          <p className="text-[9px] font-mono text-terminal-cyan">
+            {semanticDocs
+              ? `${semanticDocs.length} semantically ranked result${semanticDocs.length !== 1 ? "s" : ""}`
+              : `${(results || []).length} result${(results || []).length !== 1 ? "s" : ""} found`}
+          </p>
         )}
       </div>
 
       <div className="flex-1 overflow-y-auto py-1">
-        {loading ? (
-          <p className="text-[10px] text-muted-foreground text-center py-4 font-mono animate-pulse">Loading...</p>
+        {loading || isSearching ? (
+          <p className="text-[10px] text-muted-foreground text-center py-4 font-mono animate-pulse">
+            {isSearching ? "Searching..." : "Loading..."}
+          </p>
         ) : displayDocs.length === 0 ? (
           <div className="text-center py-8 space-y-2">
             <FileText className="w-6 h-6 text-muted-foreground mx-auto" />
             <p className="text-[10px] text-muted-foreground font-mono">
-              {results !== null ? "No matches" : "No documents — upload or add text to build your knowledge base"}
+              {hasActiveSearch ? "No matches" : "No documents — upload or add text to build your knowledge base"}
             </p>
           </div>
         ) : (
-          displayDocs.map((doc) => (
-            <div key={doc.id} className="group px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/50">
-              <div className="flex items-start gap-2">
-                <FileText className="w-3.5 h-3.5 mt-0.5 text-terminal-cyan flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <span className="text-[11px] font-mono text-foreground font-medium block truncate">{doc.title}</span>
-                  <p className="text-[9px] text-muted-foreground font-mono line-clamp-2 mt-0.5">{doc.content.slice(0, 200)}</p>
-                  <span className="text-[8px] text-muted-foreground/60 font-mono">{doc.content.length} chars · {new Date(doc.created_at).toLocaleDateString()}</span>
+          displayDocs.map((doc) => {
+            const isSemanticResult = "score" in doc;
+            return (
+              <div key={doc.id} className="group px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/50">
+                <div className="flex items-start gap-2">
+                  <FileText className="w-3.5 h-3.5 mt-0.5 text-terminal-cyan flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-mono text-foreground font-medium block truncate">{doc.title}</span>
+                      {isSemanticResult && (
+                        <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 flex-shrink-0">
+                          {(doc as any).score}% match
+                        </span>
+                      )}
+                    </div>
+                    {isSemanticResult && (doc as any).reason && (
+                      <p className="text-[9px] text-accent font-mono mt-0.5 italic">{(doc as any).reason}</p>
+                    )}
+                    <p className="text-[9px] text-muted-foreground font-mono line-clamp-2 mt-0.5">{doc.content.slice(0, 200)}</p>
+                    <span className="text-[8px] text-muted-foreground/60 font-mono">{doc.content.length} chars · {new Date(doc.created_at).toLocaleDateString()}</span>
+                  </div>
+                  <button
+                    onClick={() => removeDocument(doc.id)}
+                    className="p-1 rounded text-muted-foreground hover:text-terminal-red opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => removeDocument(doc.id)}
-                  className="p-1 rounded text-muted-foreground hover:text-terminal-red opacity-0 group-hover:opacity-100 transition-all"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
       <div className="p-2 border-t border-border">
         <p className="text-[8px] font-mono text-muted-foreground text-center">
-          {documents.length} document{documents.length !== 1 ? "s" : ""} indexed · Full-text search enabled
+          {documents.length} document{documents.length !== 1 ? "s" : ""} indexed · Full-text + AI semantic search
         </p>
       </div>
     </div>
