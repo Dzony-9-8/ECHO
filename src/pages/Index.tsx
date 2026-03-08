@@ -6,6 +6,9 @@ import WorkflowView from "@/components/WorkflowView";
 import MemoryView from "@/components/MemoryView";
 import TelemetryView from "@/components/TelemetryView";
 import ResearchView from "@/components/ResearchView";
+import AnalyticsDashboard from "@/components/AnalyticsDashboard";
+import PromptLibraryPanel from "@/components/PromptLibraryPanel";
+import RAGPanel from "@/components/RAGPanel";
 
 const Index = () => {
   const [activeView, setActiveView] = useState<ViewType>("chat");
@@ -16,6 +19,16 @@ const Index = () => {
     memory: "Memory Inspector",
     telemetry: "System Telemetry",
     research: "Research & RAG",
+    analytics: "Usage Analytics",
+    prompts: "Prompt Library",
+    rag: "Knowledge Base",
+  };
+
+  // For prompt library → navigate to chat with selected prompt
+  const handlePromptSelect = (prompt: string) => {
+    setActiveView("chat");
+    // The prompt will be picked up via a simple approach - store in sessionStorage
+    sessionStorage.setItem("echo_pending_prompt", prompt);
   };
 
   return (
@@ -28,6 +41,9 @@ const Index = () => {
         {activeView === "memory" && <MemoryView />}
         {activeView === "telemetry" && <TelemetryView />}
         {activeView === "research" && <ResearchView />}
+        {activeView === "analytics" && <AnalyticsDashboard />}
+        {activeView === "prompts" && <PromptLibraryPanel onSelect={handlePromptSelect} />}
+        {activeView === "rag" && <RAGPanel />}
       </div>
     </div>
   );

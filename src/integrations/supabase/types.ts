@@ -38,6 +38,42 @@ export type Database = {
         }
         Relationships: []
       }
+      documents: {
+        Row: {
+          category: string | null
+          content: string
+          created_at: string
+          file_name: string | null
+          file_type: string | null
+          id: string
+          search_vector: unknown
+          title: string
+          user_id: string
+        }
+        Insert: {
+          category?: string | null
+          content?: string
+          created_at?: string
+          file_name?: string | null
+          file_type?: string | null
+          id?: string
+          search_vector?: unknown
+          title: string
+          user_id: string
+        }
+        Update: {
+          category?: string | null
+          content?: string
+          created_at?: string
+          file_name?: string | null
+          file_type?: string | null
+          id?: string
+          search_vector?: unknown
+          title?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       messages: {
         Row: {
           agent: string | null
@@ -93,6 +129,115 @@ export type Database = {
           id?: string
         }
         Relationships: []
+      }
+      prompt_templates: {
+        Row: {
+          category: string
+          content: string
+          created_at: string
+          id: string
+          is_favorite: boolean
+          title: string
+          updated_at: string
+          user_id: string
+          variables: string[] | null
+        }
+        Insert: {
+          category?: string
+          content?: string
+          created_at?: string
+          id?: string
+          is_favorite?: boolean
+          title: string
+          updated_at?: string
+          user_id: string
+          variables?: string[] | null
+        }
+        Update: {
+          category?: string
+          content?: string
+          created_at?: string
+          id?: string
+          is_favorite?: boolean
+          title?: string
+          updated_at?: string
+          user_id?: string
+          variables?: string[] | null
+        }
+        Relationships: []
+      }
+      shared_conversations: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          id: string
+          is_active: boolean
+          share_token: string
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          share_token?: string
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          share_token?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shared_conversations_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      usage_logs: {
+        Row: {
+          conversation_id: string | null
+          created_at: string
+          id: string
+          latency_ms: number | null
+          model: string
+          tokens_estimated: number
+          user_id: string
+        }
+        Insert: {
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          latency_ms?: number | null
+          model: string
+          tokens_estimated?: number
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string | null
+          created_at?: string
+          id?: string
+          latency_ms?: number | null
+          model?: string
+          tokens_estimated?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "usage_logs_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {

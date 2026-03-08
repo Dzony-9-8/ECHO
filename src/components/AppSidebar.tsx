@@ -9,11 +9,14 @@ import {
   ChevronLeft,
   ChevronRight,
   LogOut,
+  BarChart3,
+  BookOpen,
+  FileText,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
 
-export type ViewType = "chat" | "workflow" | "memory" | "telemetry" | "research";
+export type ViewType = "chat" | "workflow" | "memory" | "telemetry" | "research" | "analytics" | "prompts" | "rag";
 
 interface Props {
   activeView: ViewType;
@@ -26,6 +29,9 @@ const navItems: { id: ViewType; icon: typeof MessageSquare; label: string; color
   { id: "memory", icon: Brain, label: "Memory", color: "text-terminal-magenta" },
   { id: "telemetry", icon: Activity, label: "Telemetry", color: "text-terminal-amber" },
   { id: "research", icon: Search, label: "Research", color: "text-terminal-cyan" },
+  { id: "analytics", icon: BarChart3, label: "Analytics", color: "text-primary" },
+  { id: "prompts", icon: BookOpen, label: "Prompts", color: "text-terminal-magenta" },
+  { id: "rag", icon: FileText, label: "RAG", color: "text-terminal-cyan" },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {
@@ -56,7 +62,7 @@ const AppSidebar = ({ activeView, onViewChange }: Props) => {
       </div>
 
       {/* Nav items */}
-      <div className="flex-1 py-2 space-y-0.5">
+      <div className="flex-1 py-2 space-y-0.5 overflow-y-auto">
         {navItems.map((item) => {
           const isActive = activeView === item.id;
           return (

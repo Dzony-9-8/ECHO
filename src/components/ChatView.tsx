@@ -5,10 +5,12 @@ import SystemPanel from "@/components/SystemPanel";
 import { type ChatMessage as ChatMessageType, sendMessage, getBackendMode } from "@/lib/api";
 import { type FileAttachment } from "@/lib/files";
 import { useConversations } from "@/hooks/useConversations";
+import { useUsageAnalytics } from "@/hooks/useUsageAnalytics";
 import ConversationList from "@/components/ConversationList";
 import ChatSettingsModal from "@/components/ChatSettingsModal";
 import ExportDialog from "@/components/ExportDialog";
-import { Menu, X, MessageSquareText, Settings, Download, ArrowLeft, GitBranch } from "lucide-react";
+import ShareDialog from "@/components/ShareDialog";
+import { Menu, X, MessageSquareText, Settings, Download, ArrowLeft, GitBranch, Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { estimateTokens, formatTokenCount } from "@/lib/tokens";
@@ -30,6 +32,7 @@ const ChatView = () => {
   const [showHistory, setShowHistory] = useState(true);
   const [showExport, setShowExport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const [showMobileHistory, setShowMobileHistory] = useState(false);
   const [showMobilePanel, setShowMobilePanel] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState(
@@ -52,7 +55,7 @@ const ChatView = () => {
     togglePin,
   } = useConversations();
 
-  // Total token count for conversation
+  const { logUsage } = useUsageAnalytics();
   const totalTokens = useMemo(
     () => messages.filter(m => m.id !== "welcome").reduce((sum, m) => sum + estimateTokens(m.content), 0),
     [messages]
@@ -242,6 +245,11 @@ const ChatView = () => {
           model: assistantMsg.model,
         });
       }
+
+      // Log usage analytics
+      const totalMsgTokens = estimateTokens(userMsg.content) + estimateTokens(finalContent);
+      const latency = Date.now() - assistantMsg.timestamp.getTime();
+      logUsage(assistantMsg.model || "unknown", totalMsgTokens, latency, convId || undefined);
     } catch (err: any) {
       const errMsg = err?.message || "Connection failed";
 
@@ -279,6 +287,7 @@ const ChatView = () => {
     onEscape: () => {
       setShowExport(false);
       setShowSettings(false);
+      setShowShare(false);
       setShowMobileHistory(false);
       setShowMobilePanel(false);
     },
@@ -349,6 +358,7 @@ const ChatView = () => {
       {/* Modals */}
       <ChatSettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
       <ExportDialog open={showExport} onClose={() => setShowExport(false)} messages={messages} />
+      <ShareDialog conversationId={activeConversationId} open={showShare} onClose={() => setShowShare(false)} />
 
       <div className="flex-1 flex flex-col relative">
         {/* Compact filter bar */}
@@ -418,6 +428,16 @@ const ChatView = () => {
           >
             <Settings className="w-3.5 h-3.5" />
           </button>
+          {/* Share */}
+          {activeConversationId && (
+            <button
+              onClick={() => setShowShare(true)}
+              className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+              title="Share conversation"
+            >
+              <Link2 className="w-3.5 h-3.5" />
+            </button>
+          )}
 
           {/* Export */}
           <button
