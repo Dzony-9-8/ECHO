@@ -5,7 +5,7 @@ import ChatMessageComponent from "@/components/ChatMessage";
 import { Link2Off, Terminal } from "lucide-react";
 
 const SharedView = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
