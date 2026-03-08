@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Cpu, HardDrive, Activity, MonitorSpeaker, MemoryStick, Settings, Save, RotateCcw } from "lucide-react";
+import { Cpu, Activity, MonitorSpeaker, MemoryStick, Settings, Save, RotateCcw, Thermometer } from "lucide-react";
 import { fetchSystemMetrics, getBackendMode, type RealSystemMetrics } from "@/lib/api";
 
 /* ─── Types ─── */
@@ -21,6 +21,34 @@ interface ManualOverrides {
 }
 
 type MetricSource = "local" | "override" | "browser";
+
+/* ─── Helpers ─── */
+
+/** Returns a color based on usage percentage: green < 60%, amber 60-85%, red > 85% */
+const usageColor = (percent: number): string => {
+  if (percent >= 85) return "hsl(var(--terminal-red))";
+  if (percent >= 60) return "hsl(var(--terminal-amber))";
+  return "hsl(var(--primary))";
+};
+
+const usageTextClass = (percent: number): string => {
+  if (percent >= 85) return "text-terminal-red";
+  if (percent >= 60) return "text-terminal-amber";
+  return "text-primary";
+};
+
+/** Returns a color for GPU temperature: green < 65°C, amber 65-80°C, red > 80°C */
+const tempColor = (tempC: number): string => {
+  if (tempC >= 80) return "hsl(var(--terminal-red))";
+  if (tempC >= 65) return "hsl(var(--terminal-amber))";
+  return "hsl(var(--primary))";
+};
+
+const tempTextClass = (tempC: number): string => {
+  if (tempC >= 80) return "text-terminal-red";
+  if (tempC >= 65) return "text-terminal-amber";
+  return "text-primary";
+};
 
 /* ─── Browser detection (fallback) ─── */
 const detectGPU = () => {
@@ -64,13 +92,7 @@ const getBrowserInfo = (): BrowserInfo => {
   const { gpu, gpuVendor, vramMB } = detectGPU();
   const ua = navigator.userAgent;
   const browser = ua.includes("Firefox") ? "Firefox" : ua.includes("Edg/") ? "Edge" : ua.includes("Chrome") ? "Chrome" : ua.includes("Safari") ? "Safari" : "Unknown";
-  return {
-    cpuCores: nav.hardwareConcurrency || 0,
-    deviceMemoryGB: nav.deviceMemory || null,
-    gpu, gpuVendor, vramMB,
-    platform: nav.platform || "Unknown",
-    browser,
-  };
+  return { cpuCores: nav.hardwareConcurrency || 0, deviceMemoryGB: nav.deviceMemory || null, gpu, gpuVendor, vramMB, platform: nav.platform || "Unknown", browser };
 };
 
 const getJSHeapUsage = (): { usedMB: number; totalMB: number } | null => {
@@ -79,10 +101,38 @@ const getJSHeapUsage = (): { usedMB: number; totalMB: number } | null => {
 };
 
 const OVERRIDES_KEY = "echo_system_overrides";
-const loadOverrides = (): ManualOverrides => {
-  try { return JSON.parse(localStorage.getItem(OVERRIDES_KEY) || "{}"); } catch { return {}; }
-};
+const loadOverrides = (): ManualOverrides => { try { return JSON.parse(localStorage.getItem(OVERRIDES_KEY) || "{}"); } catch { return {}; } };
 const saveOverrides = (o: ManualOverrides) => localStorage.setItem(OVERRIDES_KEY, JSON.stringify(o));
+
+/* ─── Usage Bar Component ─── */
+const UsageBar = ({ percent, label, detail, showTemp, tempC }: { percent: number; label: string; detail: string; showTemp?: boolean; tempC?: number | null }) => {
+  const barColor = usageColor(percent);
+  const pctClass = usageTextClass(percent);
+
+  return (
+    <div>
+      <div className="flex justify-between text-[10px] font-mono mb-1">
+        <span className={pctClass}>{label}</span>
+        <span className="text-muted-foreground">{detail}</span>
+      </div>
+      <div className="h-2 bg-muted rounded-full overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-700 ease-out"
+          style={{ width: `${Math.min(percent, 100)}%`, backgroundColor: barColor }}
+        />
+      </div>
+      <div className="flex justify-between items-center mt-0.5">
+        <span className={`text-[9px] font-mono ${pctClass}`}>{Math.round(percent)}%</span>
+        {showTemp && tempC !== null && tempC !== undefined && (
+          <span className={`text-[9px] font-mono flex items-center gap-0.5 ${tempTextClass(tempC)}`}>
+            <Thermometer className="w-2.5 h-2.5" />
+            {tempC}°C
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
 
 /* ─── Component ─── */
 const SystemMetrics = () => {
@@ -122,11 +172,7 @@ const SystemMetrics = () => {
     setShowSettings(false);
   };
 
-  const handleClearOverrides = () => {
-    setOverrides({});
-    setEditOverrides({});
-    saveOverrides({});
-  };
+  const handleClearOverrides = () => { setOverrides({}); setEditOverrides({}); saveOverrides({}); };
 
   // Resolved values: local > override > browser
   const cpuName = realMetrics?.cpu.name || overrides.cpuName || null;
@@ -135,7 +181,7 @@ const SystemMetrics = () => {
 
   const ramTotalGB = realMetrics?.ram.total_gb || overrides.ramTotalGB || browserInfo.deviceMemoryGB;
   const ramUsedGB = realMetrics?.ram.used_gb ?? null;
-  const ramUsage = realMetrics?.ram.usage_percent ?? (ramTotalGB ? 55 : null);
+  const ramPercent = realMetrics?.ram.usage_percent ?? (ramUsedGB !== null && ramTotalGB ? (ramUsedGB / ramTotalGB) * 100 : null);
 
   const gpuName = realMetrics?.gpu?.name || overrides.gpuName || browserInfo.gpu;
   const vramTotalMB = realMetrics?.gpu?.vram_total_mb || overrides.vramMB || browserInfo.vramMB;
@@ -145,8 +191,13 @@ const SystemMetrics = () => {
 
   const gpuShort = gpuName ? gpuName.replace(/ANGLE \(/, "").replace(/\)$/, "").split(",")[0].trim() : "N/A";
 
-  const sourceLabel = source === "local" ? "⚡ Live" : source === "override" ? "✏ Override" : "🌐 Browser";
-  const sourceColor = source === "local" ? "text-primary" : source === "override" ? "text-terminal-amber" : "text-muted-foreground";
+  const isLive = source === "local";
+  const sourceLabel = isLive ? "⚡ Live" : source === "override" ? "✏ Override" : "🌐 Browser";
+  const sourceColor = isLive ? "text-primary" : source === "override" ? "text-terminal-amber" : "text-muted-foreground";
+
+  // Top-bar compact usage indicators
+  const cpuPctDisplay = cpuUsage !== null ? Math.round(cpuUsage) : null;
+  const ramPctDisplay = ramPercent !== null ? Math.round(ramPercent) : null;
 
   return (
     <div className="relative">
@@ -154,22 +205,34 @@ const SystemMetrics = () => {
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-3 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"
       >
+        {/* CPU */}
         <span className="flex items-center gap-1">
           <Cpu className="w-3 h-3 text-terminal-cyan" />
-          <span className="text-terminal-cyan">{cpuUsage !== null ? `${Math.round(cpuUsage)}%` : `${cpuCores}C`}</span>
+          <span className={cpuPctDisplay !== null ? usageTextClass(cpuPctDisplay) : "text-terminal-cyan"}>
+            {cpuPctDisplay !== null ? `${cpuPctDisplay}%` : `${cpuCores}C`}
+          </span>
         </span>
+        {/* RAM */}
         <span className="flex items-center gap-1">
           <MemoryStick className="w-3 h-3 text-terminal-amber" />
-          <span className="text-terminal-amber">
+          <span className={ramPctDisplay !== null ? usageTextClass(ramPctDisplay) : "text-terminal-amber"}>
             {ramUsedGB !== null && ramTotalGB ? `${ramUsedGB.toFixed(1)}/${ramTotalGB}GB` : ramTotalGB ? `${ramTotalGB}GB` : "N/A"}
           </span>
         </span>
+        {/* VRAM */}
         {vramTotalMB && (
           <span className="flex items-center gap-1">
             <MonitorSpeaker className="w-3 h-3 text-terminal-magenta" />
             <span className="text-terminal-magenta">
               {vramUsedMB !== null ? `${(vramUsedMB / 1024).toFixed(1)}/${(vramTotalMB / 1024).toFixed(0)}GB` : `${(vramTotalMB / 1024).toFixed(0)}GB`}
             </span>
+          </span>
+        )}
+        {/* GPU Temp in top bar when live */}
+        {gpuTemp !== null && (
+          <span className={`flex items-center gap-0.5 ${tempTextClass(gpuTemp)}`}>
+            <Thermometer className="w-3 h-3" />
+            {gpuTemp}°C
           </span>
         )}
       </button>
@@ -223,60 +286,101 @@ const SystemMetrics = () => {
 
           <div className="space-y-3">
             {/* CPU */}
-            <div>
-              <div className="flex justify-between text-[10px] font-mono mb-1">
-                <span className="text-terminal-cyan">CPU</span>
-                <span className="text-muted-foreground">
-                  {cpuName ? cpuName : `${cpuCores} threads`}
-                  {cpuUsage !== null ? ` · ${Math.round(cpuUsage)}%` : ""}
-                </span>
-              </div>
-              {cpuUsage !== null && (
-                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${cpuUsage}%`, backgroundColor: `hsl(var(--terminal-cyan))` }} />
+            {cpuUsage !== null ? (
+              <UsageBar
+                percent={cpuUsage}
+                label={`CPU${cpuName ? ` · ${cpuName}` : ""}`}
+                detail={`${cpuCores} threads`}
+              />
+            ) : (
+              <div>
+                <div className="flex justify-between text-[10px] font-mono mb-1">
+                  <span className="text-terminal-cyan">CPU</span>
+                  <span className="text-muted-foreground">{cpuName || `${cpuCores} threads`}</span>
                 </div>
-              )}
-            </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-muted-foreground/20" style={{ width: "0%" }} />
+                </div>
+                <span className="text-[9px] text-muted-foreground font-mono">No live data</span>
+              </div>
+            )}
 
             {/* RAM */}
-            <div>
-              <div className="flex justify-between text-[10px] font-mono mb-1">
-                <span className="text-terminal-amber">RAM</span>
-                <span className="text-muted-foreground">
-                  {ramUsedGB !== null && ramTotalGB ? `${ramUsedGB.toFixed(1)} / ${ramTotalGB} GB` : ramTotalGB ? `${ramTotalGB} GB total` : "Unknown"}
-                </span>
+            {ramPercent !== null && ramTotalGB ? (
+              <div>
+                <UsageBar
+                  percent={ramPercent}
+                  label="RAM"
+                  detail={ramUsedGB !== null ? `${ramUsedGB.toFixed(1)} / ${ramTotalGB} GB` : `${ramTotalGB} GB total`}
+                />
+                {heapUsage && (
+                  <div className="text-[9px] text-muted-foreground mt-1 font-mono">JS Heap: {heapUsage.usedMB}MB / {heapUsage.totalMB}MB</div>
+                )}
               </div>
-              {ramUsage !== null && ramTotalGB && (
-                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${ramUsedGB !== null ? (ramUsedGB / ramTotalGB) * 100 : ramUsage}%`, backgroundColor: `hsl(var(--terminal-amber))` }} />
+            ) : (
+              <div>
+                <div className="flex justify-between text-[10px] font-mono mb-1">
+                  <span className="text-terminal-amber">RAM</span>
+                  <span className="text-muted-foreground">{ramTotalGB ? `${ramTotalGB} GB total` : "Unknown"}</span>
                 </div>
-              )}
-              {heapUsage && (
-                <div className="text-[9px] text-muted-foreground mt-1">JS Heap: {heapUsage.usedMB}MB / {heapUsage.totalMB}MB</div>
-              )}
-            </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-muted-foreground/20" style={{ width: "0%" }} />
+                </div>
+                <span className="text-[9px] text-muted-foreground font-mono">No live data</span>
+                {heapUsage && (
+                  <div className="text-[9px] text-muted-foreground mt-1 font-mono">JS Heap: {heapUsage.usedMB}MB / {heapUsage.totalMB}MB</div>
+                )}
+              </div>
+            )}
 
             {/* GPU + VRAM */}
             <div>
               <div className="flex justify-between text-[10px] font-mono mb-1">
                 <span className="text-terminal-magenta">GPU</span>
-                <span className="text-muted-foreground">
-                  {vramTotalMB ? `VRAM: ${(vramTotalMB / 1024).toFixed(1)} GB` : "VRAM: N/A"}
-                </span>
+                <span className="text-muted-foreground">{vramTotalMB ? `VRAM: ${(vramTotalMB / 1024).toFixed(1)} GB` : "VRAM: N/A"}</span>
               </div>
-              <p className="text-[10px] text-foreground font-mono break-words mb-1">{gpuShort || "Not detected"}</p>
-              {gpuTemp !== null && (
-                <p className="text-[9px] text-muted-foreground font-mono">Temp: {gpuTemp}°C</p>
+              <p className="text-[10px] text-foreground font-mono break-words mb-1.5">{gpuShort || "Not detected"}</p>
+
+              {/* GPU Usage bar */}
+              {gpuUsage !== null && (
+                <UsageBar percent={gpuUsage} label="GPU Load" detail={`${Math.round(gpuUsage)}%`} />
               )}
-              {(gpuUsage !== null || vramUsedMB !== null) && vramTotalMB && (
-                <>
-                  <div className="h-1.5 bg-muted rounded-full overflow-hidden mt-1.5">
-                    <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${vramUsedMB !== null ? (vramUsedMB / vramTotalMB) * 100 : gpuUsage}%`, backgroundColor: `hsl(var(--terminal-magenta))` }} />
+
+              {/* VRAM Usage bar */}
+              {vramUsedMB !== null && vramTotalMB && (
+                <div className="mt-2">
+                  <UsageBar
+                    percent={(vramUsedMB / vramTotalMB) * 100}
+                    label="VRAM"
+                    detail={`${vramUsedMB}MB / ${vramTotalMB}MB`}
+                  />
+                </div>
+              )}
+
+              {/* GPU Temperature */}
+              {gpuTemp !== null && (
+                <div className="mt-2 flex items-center gap-2 p-1.5 rounded border border-border bg-muted/30">
+                  <Thermometer className={`w-3.5 h-3.5 ${tempTextClass(gpuTemp)}`} />
+                  <div className="flex-1">
+                    <div className="flex justify-between text-[10px] font-mono mb-0.5">
+                      <span className={tempTextClass(gpuTemp)}>Temperature</span>
+                      <span className={`font-bold ${tempTextClass(gpuTemp)}`}>{gpuTemp}°C</span>
+                    </div>
+                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-700 ease-out"
+                        style={{ width: `${Math.min((gpuTemp / 100) * 100, 100)}%`, backgroundColor: tempColor(gpuTemp) }}
+                      />
+                    </div>
                   </div>
-                  <div className="text-[9px] text-muted-foreground mt-1">
-                    {vramUsedMB !== null ? `VRAM: ${vramUsedMB}MB / ${vramTotalMB}MB` : ""}{gpuUsage !== null ? ` · GPU: ${Math.round(gpuUsage)}%` : ""}
-                  </div>
-                </>
+                </div>
+              )}
+
+              {/* Fallback when no live GPU data */}
+              {gpuUsage === null && vramUsedMB === null && gpuTemp === null && (
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-muted-foreground/20" style={{ width: "0%" }} />
+                </div>
               )}
             </div>
 
