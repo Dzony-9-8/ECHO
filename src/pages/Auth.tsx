@@ -70,7 +70,7 @@ const Auth = () => {
   };
 
   return (
-    <div className="h-screen bg-background flex items-center justify-center relative overflow-hidden">
+    <main className="h-screen bg-background flex items-center justify-center relative overflow-hidden">
       {/* Scanline overlay */}
       <div className="absolute inset-0 scanline pointer-events-none" />
 
@@ -277,7 +277,7 @@ const Auth = () => {
           ECHO AI System v2.0 · Secure Access
         </p>
       </div>
-    </div>
+    </main>
   );
 };
 
