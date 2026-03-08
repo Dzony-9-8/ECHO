@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import ChatMessage from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
 import SystemPanel from "@/components/SystemPanel";
-import { type ChatMessage as ChatMessageType, sendMessage } from "@/lib/api";
+import { type ChatMessage as ChatMessageType, sendMessage, getBackendMode } from "@/lib/api";
 import { type FileAttachment } from "@/lib/files";
 
 const ChatView = () => {
