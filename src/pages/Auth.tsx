@@ -277,7 +277,7 @@ const Auth = () => {
           ECHO AI System v2.0 · Secure Access
         </p>
       </div>
-    </div>
+    </main>
   );
 };
 
