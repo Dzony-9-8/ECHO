@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { PRESET_PROMPTS } from "@/lib/presetPrompts";
 
 export interface PromptTemplate {
   id: string;
@@ -25,6 +26,7 @@ export const usePromptLibrary = () => {
   const { user } = useAuth();
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [seeded, setSeeded] = useState(false);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -35,9 +37,34 @@ export const usePromptLibrary = () => {
       .order("updated_at", { ascending: false });
     if (data) setTemplates(data as unknown as PromptTemplate[]);
     setLoading(false);
+    return data;
   }, [user]);
 
+  // Seed preset prompts on first use
+  const seedPresets = useCallback(async () => {
+    if (!user || seeded) return;
+    const storageKey = `echo_presets_seeded_${user.id}`;
+    if (localStorage.getItem(storageKey)) { setSeeded(true); return; }
+    
+    const data = await load();
+    if (data && data.length === 0) {
+      const inserts = PRESET_PROMPTS.map((p) => ({
+        user_id: user.id,
+        title: p.title,
+        content: p.content,
+        category: p.category,
+        is_favorite: false,
+        variables: p.variables,
+      }));
+      await supabase.from("prompt_templates").insert(inserts);
+      await load();
+    }
+    localStorage.setItem(storageKey, "1");
+    setSeeded(true);
+  }, [user, seeded, load]);
+
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (!loading) seedPresets(); }, [loading, seedPresets]);
 
   const create = useCallback(async (template: Omit<PromptTemplate, "id" | "created_at">) => {
     if (!user) return;

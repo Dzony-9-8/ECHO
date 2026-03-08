@@ -1,9 +1,8 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 const SYSTEM_PROMPT = `You are ECHO, an advanced AI orchestration system. You are a multi-agent swarm intelligence framework with specialized agents:
@@ -17,9 +16,9 @@ You think step-by-step, provide detailed technical answers, and format responses
 
 You are running in cloud mode via Lovable AI. Respond as the unified ECHO system.`;
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
@@ -30,7 +29,6 @@ serve(async (req) => {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    // Whitelist allowed models
     const allowedModels = [
       "google/gemini-3-flash-preview",
       "google/gemini-2.5-flash",

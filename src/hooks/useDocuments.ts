@@ -49,13 +49,41 @@ export const useDocuments = () => {
 
   const searchDocuments = useCallback(async (query: string): Promise<Document[]> => {
     if (!user || !query.trim()) return [];
-    const { data } = await supabase
+    // Full-text search first
+    const { data: ftsData } = await supabase
       .from("documents")
       .select("id, title, content, file_name, file_type, category, created_at")
       .textSearch("search_vector", query.split(" ").join(" & "))
       .limit(10);
-    return (data as Document[]) || [];
+    
+    if (ftsData && ftsData.length > 0) return ftsData as Document[];
+
+    // Fallback: ILIKE fuzzy search
+    const { data: fuzzyData } = await supabase
+      .from("documents")
+      .select("id, title, content, file_name, file_type, category, created_at")
+      .or(`title.ilike.%${query}%,content.ilike.%${query}%`)
+      .limit(10);
+    
+    return (fuzzyData as Document[]) || [];
   }, [user]);
 
-  return { documents, loading, addDocument, removeDocument, searchDocuments, refresh: load };
+  const semanticSearch = useCallback(async (query: string): Promise<{ id: string; score: number; reason: string }[]> => {
+    if (!user || !query.trim() || documents.length === 0) return [];
+    try {
+      const { data, error } = await supabase.functions.invoke("semantic-search", {
+        body: {
+          query,
+          documents: documents.map((d) => ({ id: d.id, title: d.title, content: d.content })),
+        },
+      });
+      if (error) throw error;
+      return data?.results || [];
+    } catch (err) {
+      console.error("Semantic search failed:", err);
+      return [];
+    }
+  }, [user, documents]);
+
+  return { documents, loading, addDocument, removeDocument, searchDocuments, semanticSearch, refresh: load };
 };
