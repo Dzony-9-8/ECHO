@@ -53,6 +53,7 @@ const ChatView = () => {
     saveMessage,
     pinnedIds,
     togglePin,
+    searchMessages,
   } = useConversations();
 
   const { logUsage } = useUsageAnalytics();
