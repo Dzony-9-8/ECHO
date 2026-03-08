@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { type ChatMessage } from "@/lib/api";
-import ChatMessage from "@/components/ChatMessage";
+import { type ChatMessage as ChatMessageType } from "@/lib/api";
+import ChatMessageComponent from "@/components/ChatMessage";
 import { Link2Off, Terminal } from "lucide-react";
 
 const SharedView = () => {
