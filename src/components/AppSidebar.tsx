@@ -8,8 +8,10 @@ import {
   Terminal,
   ChevronLeft,
   ChevronRight,
+  LogOut,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAuth } from "@/hooks/useAuth";
 
 export type ViewType = "chat" | "workflow" | "memory" | "telemetry" | "research";
 
@@ -28,6 +30,7 @@ const navItems: { id: ViewType; icon: typeof MessageSquare; label: string; color
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {
   const [collapsed, setCollapsed] = useState(false);
+  const { user, signOut } = useAuth();
 
   return (
     <motion.div
@@ -83,6 +86,43 @@ const AppSidebar = ({ activeView, onViewChange }: Props) => {
           );
         })}
       </div>
+
+      {/* User info + sign out */}
+      {user && (
+        <div className="border-t border-border p-2">
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="text-[9px] text-muted-foreground font-mono truncate px-1 mb-1"
+              >
+                {user.email}
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <button
+            onClick={signOut}
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-[10px] text-terminal-red hover:bg-terminal-red/10 rounded transition-colors font-mono"
+            title="Sign out"
+          >
+            <LogOut className="w-3.5 h-3.5 flex-shrink-0" />
+            <AnimatePresence>
+              {!collapsed && (
+                <motion.span
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="uppercase tracking-widest"
+                >
+                  Logout
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </button>
+        </div>
+      )}
 
       {/* Collapse toggle */}
       <button
