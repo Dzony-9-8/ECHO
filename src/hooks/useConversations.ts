@@ -15,6 +15,28 @@ export const useConversations = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem("echo_pinned_conversations");
+      return saved ? new Set(JSON.parse(saved)) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
+
+  // Persist pinned IDs
+  useEffect(() => {
+    localStorage.setItem("echo_pinned_conversations", JSON.stringify([...pinnedIds]));
+  }, [pinnedIds]);
+
+  const togglePin = useCallback((id: string) => {
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   // Load conversations
   const loadConversations = useCallback(async () => {
@@ -49,6 +71,11 @@ export const useConversations = () => {
   const deleteConversation = useCallback(async (id: string) => {
     await supabase.from("conversations").delete().eq("id", id);
     setConversations((prev) => prev.filter((c) => c.id !== id));
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     if (activeConversationId === id) setActiveConversationId(null);
   }, [activeConversationId]);
 
@@ -83,13 +110,11 @@ export const useConversations = () => {
       agent: msg.agent || null,
       model: msg.model || null,
     });
-    // Update conversation timestamp and title
     const updates: Record<string, string> = { updated_at: new Date().toISOString() };
     if (msg.role === "user" && msg.content.length > 0) {
       updates.title = msg.content.slice(0, 80);
     }
     await supabase.from("conversations").update(updates).eq("id", conversationId);
-    // Refresh list
     loadConversations();
   }, [loadConversations]);
 
@@ -102,5 +127,7 @@ export const useConversations = () => {
     loadMessages,
     saveMessage,
     loading,
+    pinnedIds,
+    togglePin,
   };
 };

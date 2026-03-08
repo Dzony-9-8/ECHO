@@ -2,8 +2,10 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion } from "framer-motion";
 import { ChatMessage as ChatMessageType } from "@/lib/api";
-import { Bot, User, Cpu, Image, FileText, Edit3, RefreshCw, Copy, Check } from "lucide-react";
-import { useState } from "react";
+import { Bot, User, Cpu, Image, FileText, Edit3, RefreshCw, Copy, Check, Hash } from "lucide-react";
+import { useState, useMemo } from "react";
+import CodeBlock from "./CodeBlock";
+import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 
 interface Props {
   message: ChatMessageType;
@@ -16,6 +18,8 @@ const ChatMessage = ({ message, onEdit, onRegenerate }: Props) => {
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
+
+  const tokenCount = useMemo(() => estimateTokens(message.content), [message.content]);
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -123,10 +127,40 @@ const ChatMessage = ({ message, onEdit, onRegenerate }: Props) => {
             }`}
           >
             {message.status === "streaming" && !message.content ? (
-              <span className="cursor-blink text-primary">▊</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  {message.agent || "ECHO"} is thinking
+                </span>
+                <span className="flex gap-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "300ms" }} />
+                </span>
+              </div>
             ) : (
-              <div className="prose prose-sm prose-invert max-w-none [&_code]:text-terminal-amber [&_code]:bg-muted [&_pre]:bg-background [&_pre]:border [&_pre]:border-border">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              <div className="prose prose-sm prose-invert max-w-none [&_code]:text-terminal-amber [&_code]:bg-muted [&_pre]:bg-transparent [&_pre]:border-none [&_pre]:p-0 [&_pre]:m-0">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    code({ className, children, ...props }) {
+                      const match = /language-(\w+)/.exec(className || "");
+                      const codeStr = String(children).replace(/\n$/, "");
+                      if (match) {
+                        return <CodeBlock language={match[1]}>{codeStr}</CodeBlock>;
+                      }
+                      return (
+                        <code className={className} {...props}>
+                          {children}
+                        </code>
+                      );
+                    },
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
+                {message.status === "streaming" && message.content && (
+                  <span className="cursor-blink text-primary ml-0.5">▊</span>
+                )}
               </div>
             )}
           </div>
@@ -148,6 +182,11 @@ const ChatMessage = ({ message, onEdit, onRegenerate }: Props) => {
                 <RefreshCw className="w-3 h-3" />
               </button>
             )}
+            {/* Token count */}
+            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground font-mono ml-1" title={`~${tokenCount} tokens`}>
+              <Hash className="w-2.5 h-2.5" />
+              {formatTokenCount(tokenCount)}
+            </span>
             <span className="text-[10px] text-muted-foreground font-mono ml-1">
               {message.timestamp.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             </span>

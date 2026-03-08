@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import ChatMessage from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
 import SystemPanel from "@/components/SystemPanel";
@@ -6,8 +6,10 @@ import { type ChatMessage as ChatMessageType, sendMessage, getBackendMode } from
 import { type FileAttachment } from "@/lib/files";
 import { useConversations } from "@/hooks/useConversations";
 import ConversationList from "@/components/ConversationList";
-import { Download } from "lucide-react";
+import { Download, Menu, X, MessageSquareText } from "lucide-react";
 import { toast } from "sonner";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 
 const WELCOME_MSG: ChatMessageType = {
   id: "welcome",
@@ -24,6 +26,11 @@ const ChatView = () => {
   const [showPanel, setShowPanel] = useState(true);
   const [showHistory, setShowHistory] = useState(true);
   const [showExport, setShowExport] = useState(false);
+  const [showMobileHistory, setShowMobileHistory] = useState(false);
+  const [showMobilePanel, setShowMobilePanel] = useState(false);
+  const [systemPrompt, setSystemPrompt] = useState(
+    localStorage.getItem("echo_system_prompt") || ""
+  );
   const [activeAgents, setActiveAgents] = useState<Set<string>>(
     new Set(["Supervisor", "Developer", "Researcher", "Critic"])
   );
@@ -37,22 +44,37 @@ const ChatView = () => {
     deleteConversation,
     loadMessages,
     saveMessage,
+    pinnedIds,
+    togglePin,
   } = useConversations();
+
+  // Total token count for conversation
+  const totalTokens = useMemo(
+    () => messages.filter(m => m.id !== "welcome").reduce((sum, m) => sum + estimateTokens(m.content), 0),
+    [messages]
+  );
 
   const handleSelectConversation = useCallback(async (id: string) => {
     setActiveConversationId(id);
     const msgs = await loadMessages(id);
     setMessages(msgs.length > 0 ? msgs : [WELCOME_MSG]);
+    setShowMobileHistory(false);
   }, [loadMessages, setActiveConversationId]);
 
   const handleNewConversation = useCallback(async () => {
     setActiveConversationId(null);
     setMessages([WELCOME_MSG]);
+    setShowMobileHistory(false);
   }, [setActiveConversationId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Save system prompt
+  useEffect(() => {
+    localStorage.setItem("echo_system_prompt", systemPrompt);
+  }, [systemPrompt]);
 
   const toggleAgent = (agent: string) => {
     setActiveAgents((prev) => {
@@ -111,28 +133,26 @@ const ChatView = () => {
     a.click();
     URL.revokeObjectURL(url);
     toast.success(`Exported as ${filename}`);
+    setShowExport(false);
   };
 
-  // Edit message & resend from that point
+  // Edit message & resend
   const handleEditMessage = async (id: string, newContent: string) => {
     const idx = messages.findIndex((m) => m.id === id);
     if (idx === -1) return;
     const edited = { ...messages[idx], content: newContent };
     const trimmed = [...messages.slice(0, idx), edited];
     setMessages(trimmed);
-    // Re-send from this point
     await doSend(newContent, trimmed.slice(0, -1), undefined, undefined);
   };
 
-  // Regenerate last assistant message
+  // Regenerate
   const handleRegenerate = async (id: string) => {
     const idx = messages.findIndex((m) => m.id === id);
     if (idx === -1) return;
-    // Find the preceding user message
     const userMsgs = messages.slice(0, idx);
     const lastUserMsg = [...userMsgs].reverse().find((m) => m.role === "user");
     if (!lastUserMsg) return;
-    // Remove the assistant message being regenerated
     const trimmed = messages.slice(0, idx);
     setMessages(trimmed);
     await doSend(lastUserMsg.content, trimmed.slice(0, -1), undefined, undefined);
@@ -213,7 +233,6 @@ const ChatView = () => {
     } catch (err: any) {
       const errMsg = err?.message || "Connection failed";
 
-      // Handle rate limits and payment errors
       if (errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit")) {
         toast.error("Rate limit exceeded — please wait a moment and try again.");
       } else if (errMsg.includes("402") || errMsg.toLowerCase().includes("credit")) {
@@ -240,6 +259,18 @@ const ChatView = () => {
     await doSend(content, messages, attachments, depth, model);
   };
 
+  // Keyboard shortcuts
+  useKeyboardShortcuts({
+    onExport: () => setShowExport((v) => !v),
+    onTogglePanel: () => setShowPanel((v) => !v),
+    onToggleHistory: () => setShowHistory((v) => !v),
+    onEscape: () => {
+      setShowExport(false);
+      setShowMobileHistory(false);
+      setShowMobilePanel(false);
+    },
+  });
+
   const agentColors: Record<string, string> = {
     Supervisor: "border-terminal-amber text-terminal-amber",
     Developer: "border-terminal-cyan text-terminal-cyan",
@@ -249,7 +280,7 @@ const ChatView = () => {
 
   return (
     <div className="flex-1 flex overflow-hidden">
-      {/* Conversation history sidebar */}
+      {/* Desktop history sidebar */}
       {showHistory && (
         <div className="w-56 border-r border-border bg-sidebar flex-shrink-0 hidden md:block">
           <ConversationList
@@ -258,65 +289,135 @@ const ChatView = () => {
             onSelect={handleSelectConversation}
             onNew={handleNewConversation}
             onDelete={deleteConversation}
+            pinnedIds={pinnedIds}
+            onTogglePin={togglePin}
+            systemPrompt={systemPrompt}
+            onSystemPromptChange={setSystemPrompt}
           />
         </div>
       )}
 
+      {/* Mobile history overlay */}
+      {showMobileHistory && (
+        <>
+          <div className="fixed inset-0 bg-background/80 z-40 md:hidden" onClick={() => setShowMobileHistory(false)} />
+          <div className="fixed left-0 top-0 bottom-0 w-72 bg-sidebar border-r border-border z-50 md:hidden">
+            <div className="flex items-center justify-between p-2 border-b border-border">
+              <span className="text-xs font-mono text-primary uppercase tracking-wider">History</span>
+              <button onClick={() => setShowMobileHistory(false)} className="text-muted-foreground hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <ConversationList
+              conversations={conversations}
+              activeId={activeConversationId}
+              onSelect={handleSelectConversation}
+              onNew={handleNewConversation}
+              onDelete={deleteConversation}
+              pinnedIds={pinnedIds}
+              onTogglePin={togglePin}
+              systemPrompt={systemPrompt}
+              onSystemPromptChange={setSystemPrompt}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Mobile panel overlay */}
+      {showMobilePanel && (
+        <>
+          <div className="fixed inset-0 bg-background/80 z-40 lg:hidden" onClick={() => setShowMobilePanel(false)} />
+          <div className="fixed right-0 top-0 bottom-0 w-72 z-50 lg:hidden">
+            <SystemPanel />
+          </div>
+        </>
+      )}
+
       <div className="flex-1 flex flex-col relative">
-        {/* Agent filter bar */}
-        <div className="border-b border-border bg-card px-4 py-2 flex items-center gap-2 z-20 overflow-visible flex-wrap">
+        {/* Compact filter bar */}
+        <div className="border-b border-border bg-card px-3 py-1.5 flex items-center gap-1.5 z-20 overflow-visible">
+          {/* Mobile menu */}
+          <button
+            onClick={() => setShowMobileHistory(true)}
+            className="p-1 rounded text-muted-foreground hover:text-foreground md:hidden"
+          >
+            <Menu className="w-4 h-4" />
+          </button>
+
+          {/* Desktop history toggle */}
           <button
             onClick={() => setShowHistory(!showHistory)}
-            className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-widest font-mono mr-2 flex-shrink-0"
+            className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-widest font-mono flex-shrink-0 hidden md:inline"
           >
-            {showHistory ? "◀ History" : "▶ History"}
+            {showHistory ? "◀" : "▶"}
           </button>
-          <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-display mr-2 flex-shrink-0 hidden sm:inline">
-            Filter:
-          </span>
+
+          <span className="text-border hidden sm:inline">|</span>
+
+          {/* Agent filters — compact */}
           {Object.keys(agentColors).map((agent) => (
             <button
               key={agent}
               onClick={() => toggleAgent(agent)}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono border transition-all flex-shrink-0 ${
+              className={`px-1.5 py-0.5 rounded text-[10px] font-mono border transition-all flex-shrink-0 ${
                 activeAgents.has(agent)
                   ? agentColors[agent] + " bg-current/10"
                   : "border-muted text-muted-foreground opacity-40"
               }`}
+              title={agent}
             >
-              {agent}
+              <span className="hidden sm:inline">{agent}</span>
+              <span className="sm:hidden">{agent[0]}</span>
             </button>
           ))}
-          <div className="flex-1 min-w-[8px]" />
+
+          <div className="flex-1 min-w-[4px]" />
+
+          {/* Token counter */}
+          {totalTokens > 0 && (
+            <span className="text-[9px] font-mono text-muted-foreground flex-shrink-0 hidden sm:inline" title={`~${totalTokens} tokens total`}>
+              ~{formatTokenCount(totalTokens)} tok
+            </span>
+          )}
+
           {/* Export */}
           <div className="relative flex-shrink-0">
             <button
               onClick={() => setShowExport(!showExport)}
-              className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-widest font-mono flex items-center gap-1"
+              className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+              title="Export (Ctrl+E)"
             >
-              <Download className="w-3 h-3" />
-              Export
+              <Download className="w-3.5 h-3.5" />
             </button>
             {showExport && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowExport(false)} />
                 <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded shadow-lg z-50 py-1 w-32">
-                  <button onClick={() => { handleExport("md"); setShowExport(false); }} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
+                  <button onClick={() => handleExport("md")} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
                     Markdown (.md)
                   </button>
-                  <button onClick={() => { handleExport("json"); setShowExport(false); }} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
+                  <button onClick={() => handleExport("json")} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
                     JSON (.json)
                   </button>
                 </div>
               </>
             )}
           </div>
-          <span className="text-border mx-1 flex-shrink-0 hidden sm:inline">|</span>
+
+          {/* Panel toggle */}
           <button
-            onClick={() => setShowPanel(!showPanel)}
-            className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-widest font-mono flex-shrink-0"
+            onClick={() => {
+              // Desktop: toggle inline panel; Mobile: open overlay
+              if (window.innerWidth >= 1024) {
+                setShowPanel(!showPanel);
+              } else {
+                setShowMobilePanel(!showMobilePanel);
+              }
+            }}
+            className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors"
+            title="Toggle Panel (Ctrl+B)"
           >
-            {showPanel ? "Hide Panel ▶" : "◀ Panel"}
+            <MessageSquareText className="w-3.5 h-3.5" />
           </button>
         </div>
 
