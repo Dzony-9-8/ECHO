@@ -239,7 +239,7 @@ const SystemMetrics = () => {
       </button>
 
       {expanded && (
-        <div className="absolute top-8 right-0 w-80 border border-border bg-card rounded p-3 z-50 shadow-lg">
+        <div className="absolute top-8 right-0 w-80 border border-border bg-card rounded p-3 z-30 shadow-lg">
           {/* Header */}
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
