@@ -16,7 +16,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
 
-export type ViewType = "chat" | "workflow" | "memory" | "telemetry" | "research" | "analytics" | "prompts" | "rag";
+export type ViewType = "chat" | "workflow" | "memory" | "telemetry" | "research" | "analytics" | "prompts" | "rag" | "skills";
 
 interface Props {
   activeView: ViewType;
