@@ -289,19 +289,24 @@ const ChatView = () => {
           ))}
           <div className="flex-1" />
           {/* Export */}
-          <div className="relative group flex-shrink-0">
-            <button className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-widest font-mono flex items-center gap-1">
+          <div className="relative flex-shrink-0">
+            <button
+              onClick={() => setShowExport(!showExport)}
+              className="text-[10px] text-muted-foreground hover:text-foreground uppercase tracking-widest font-mono flex items-center gap-1"
+            >
               <Download className="w-3 h-3" />
               Export
             </button>
-            <div className="absolute right-0 top-full mt-1 hidden group-hover:block bg-card border border-border rounded shadow-lg z-50 py-1 w-32">
-              <button onClick={() => handleExport("md")} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
-                Markdown (.md)
-              </button>
-              <button onClick={() => handleExport("json")} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
-                JSON (.json)
-              </button>
-            </div>
+            {showExport && (
+              <div className="absolute right-0 top-full mt-1 bg-card border border-border rounded shadow-lg z-50 py-1 w-32">
+                <button onClick={() => { handleExport("md"); setShowExport(false); }} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
+                  Markdown (.md)
+                </button>
+                <button onClick={() => { handleExport("json"); setShowExport(false); }} className="w-full px-3 py-1.5 text-left text-[10px] font-mono hover:bg-muted/50 text-foreground">
+                  JSON (.json)
+                </button>
+              </div>
+            )}
           </div>
           <button
             onClick={() => setShowPanel(!showPanel)}
