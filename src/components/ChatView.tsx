@@ -32,6 +32,7 @@ const ChatView = () => {
   const [showHistory, setShowHistory] = useState(true);
   const [showExport, setShowExport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   const [showMobileHistory, setShowMobileHistory] = useState(false);
   const [showMobilePanel, setShowMobilePanel] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState(
