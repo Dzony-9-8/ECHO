@@ -3,6 +3,7 @@ import ChatMessage from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
 import SystemPanel from "@/components/SystemPanel";
 import { type ChatMessage as ChatMessageType, sendMessage } from "@/lib/api";
+import { type FileAttachment } from "@/lib/files";
 
 const ChatView = () => {
   const [messages, setMessages] = useState<ChatMessageType[]>([
