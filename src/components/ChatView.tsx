@@ -17,6 +17,7 @@ import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 import { saveBranch, getParentBranch } from "@/lib/branches";
 import { getConversationSystemPrompt, setConversationSystemPrompt } from "@/lib/conversationSystemPrompts";
+import { buildSkillsPrompt } from "@/lib/agentSkills";
 
 const WELCOME_MSG: ChatMessageType = {
   id: "welcome",
