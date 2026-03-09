@@ -1,5 +1,15 @@
 // Agent Skills System — localStorage-backed skill files per agent
 
+export interface SkillEvalCase {
+  id: string;
+  prompt: string;
+  expectedBehavior: string;
+  lastResult?: "pass" | "fail";
+  lastScore?: number; // 1-5
+  lastNotes?: string;
+  lastRunAt?: string;
+}
+
 export interface AgentSkill {
   id: string;
   name: string;
@@ -9,6 +19,8 @@ export interface AgentSkill {
   createdAt: string;
   updatedAt: string;
   source?: string; // e.g. "claude-code", "custom", filename
+  evals?: SkillEvalCase[];
+  triggerDescription?: string;
 }
 
 const STORAGE_KEY = "echo_agent_skills";
