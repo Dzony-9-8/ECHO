@@ -2,3 +2,6 @@ project_id = "filzxulsfjhyohwdavzd"
 
 [functions.chat]
 verify_jwt = false
+
+[functions.skill-tools]
+verify_jwt = false
