@@ -1,77 +1,100 @@
-# Local AI Orchestrator
+# Project ECHO — Local AI Orchestrator
 
-Planner → Router → Specialists (Reasoning / Coding) → Tools (optional) → Synthesizer (persona + reflection) → Memory update.
+A fully local, self-improving AI system running open-source GGUF models on a single GPU. ECHO uses a multi-agent architecture with a cognitive thinking loop, persistent memory, and autonomous tool discovery — no cloud required.
 
-## 1. Installation
+```
+User Input
+    ↓
+ContextController (trim context to fit VRAM)
+    ↓
+ThinkingLoop (plan → execute → critique → revise until score ≥ 0.75)
+    ├── SkillCompiler (inject matched .md skill steps)
+    ├── Planner (LLaMA 3.1 8B)
+    ├── AgentLoop (tools: file, shell, python)
+    ├── OutputSynthesizer
+    └── CriticAgent (score + guidance)
+    ↓
+ThoughtGraph (persist every reasoning iteration to SQLite)
+    ↓
+StreamBatcher → UI / Terminal
+    ↓
+[Background]
+SelfImprovementEngine (analyse patterns, patch prompts)
+GPUScheduler (yield VRAM to foreground tasks)
+ProjectManager (long-running project context)
+```
 
-**Go to the project folder first:**
+---
+
+## Features
+
+| Layer | Feature | Description |
+|-------|---------|-------------|
+| Foundation | **Thinking Loop** | Iterative self-correction: loop retries until CriticAgent scores ≥ 0.75 |
+| Foundation | **Thought Graph** | Every reasoning iteration persisted to SQLite for analysis |
+| Foundation | **Context Controller** | Semantic trimming keeps context within VRAM budget |
+| Agent | **Personality Models** | Each agent (dev/research/critic) has a consistent injected personality |
+| Agent | **Skill Compiler** | `.md` skill files compiled to structured plan templates |
+| Agent | **Tool Discovery** | Auto-registers tools from `TOOL_MANIFEST` dicts at startup |
+| Agent | **Self-Improvement** | Analyses ThoughtGraph, patches prompts and routing thresholds |
+| Inference | **KV Cache Reuse** | Avoids re-encoding unchanged system prompt prefixes |
+| Inference | **Quantization Switching** | Q4/Q6/Q8 selection based on task complexity score |
+| Inference | **GPU Scheduler** | Cooperative asyncio.Event pauses background tasks for foreground VRAM |
+| Inference | **Speculative Decoding** | Draft (8B) + verify (DeepSeek-R1) for faster reasoning |
+| Inference | **Token Stream Batcher** | Batches tokens before UI emit to reduce overhead |
+| Inference | **Streaming Pipeline** | `process_stream()` yields typed events per phase |
+| Product | **Project Mode** | `!project new/resume/pause/status` — persistent multi-session projects |
+
+---
+
+## Models
+
+Place GGUF files in `ai-orchestrator/models/`:
+
+| Role | Model | File |
+|------|-------|------|
+| Planner / Synth | LLaMA 3.1 8B Q4_K_M | `llama-3.1-8b.gguf` |
+| Reasoning | DeepSeek-R1 7B Q4_K_M | `deepseek-r1.gguf` |
+| Coding | DeepSeek-Coder 6.7B Q4_K_M | `deepseek-coder.gguf` |
+
+For quantization switching (Phase 4), also place:
+- `deepseek-r1-q4.gguf`, `deepseek-r1-q6.gguf`, `deepseek-r1-q8.gguf`
+
+---
+
+## Installation
+
+**Python 3.10, 3.11, or 3.12 required.** Not 3.13 (no prebuilt llama-cpp-python wheel).
 
 ```powershell
 cd "D:\AI\Claude Code\Project ECHO\ai-orchestrator"
-```
-
-**Python version:** Prebuilt wheels for `llama-cpp-python` exist for **Python 3.10, 3.11 and 3.12 only** — **not 3.13**. If you see "Building wheel for llama-cpp-python" and then "nmake" / "CMAKE_C_COMPILER" errors, you are on 3.13 and must use 3.12 for this project.
-
-**If you have Python 3.13 (or get the build error above):**
-
-1. **Install Python 3.12** — you don’t have it yet. Download the **Windows 64-bit installer** from [python.org/downloads/release/python-3120](https://www.python.org/downloads/release/python-3120/) (or the latest 3.12.x). Run the installer; you can keep 3.13. Optionally check “Add Python to PATH”. Close and reopen the terminal after installing.
-2. Remove the old venv and create one with 3.12.  
-   **In PowerShell:**
-   ```powershell
-   cd "D:\AI\Claude Code\Project ECHO\ai-orchestrator"
-   Remove-Item -Recurse -Force venv -ErrorAction SilentlyContinue
-   py -3.12 -m venv venv
-   venv\Scripts\activate.bat
-   ```
-   **In CMD (Command Prompt):**
-   ```cmd
-   cd "D:\AI\Claude Code\Project ECHO\ai-orchestrator"
-   rmdir /s /q venv
-   py -3.12 -m venv venv
-   venv\Scripts\activate.bat
-   ```
-   If `py -3.12` says “No suitable Python runtime found”, Python 3.12 isn’t installed or wasn’t added to PATH; install it from the link in step 1 and try again. To see what’s installed: `py -0`.
-3. Install with the **install scripts** (they force the prebuilt wheel and check Python version):
-   - **GPU:** double‑click `install-cuda.bat` or run it from the project folder.
-   - **CPU:** double‑click `install-cpu.bat`.
-   Or manually (must be 3.12 in the venv):  
-   `pip install --only-binary :all: llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121`  
-   then `pip install -r requirements-other.txt`.
-
-**If you already have Python 3.10, 3.11 or 3.12 as default**, create the venv and activate:
-
-```powershell
-python -m venv venv
+py -3.12 -m venv venv
 venv\Scripts\activate.bat
 ```
-*(If PowerShell blocks scripts, use Command Prompt or run `venv\Scripts\activate.bat`.)*
 
-**Install dependencies — use prebuilt wheels (no compiler needed):**
+**GPU (CUDA):**
+```powershell
+install-cuda.bat
+```
 
-- **Easiest:** run **`install-cuda.bat`** (GPU) or **`install-cpu.bat`** (CPU). They check that the venv is Python 3.10/3.11/3.12 and install the wheel only (no build).
+**CPU only:**
+```powershell
+install-cpu.bat
+```
 
-- **Manual — CPU:**  
-  `pip install -r requirements-cpu.txt`
+Or manually:
+```powershell
+# GPU
+pip install --only-binary :all: llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+pip install -r requirements-other.txt
 
-- **Manual — GPU (CUDA):**  
-  Check CUDA with `nvidia-smi`; edit `requirements-cuda.txt` if needed (`cu121`, `cu122`, …). Then:  
-  `pip install -r requirements-cuda.txt`
+# CPU
+pip install -r requirements-cpu.txt
+```
 
-If the venv is **Python 3.13**, pip will try to **build from source** and you’ll get errors like "nmake not found" or "CMAKE_C_COMPILER not set" unless you have Visual Studio Build Tools (or MinGW) set up. So prefer **requirements-cpu.txt** or **requirements-cuda.txt**.
+---
 
-## 2. Download models (GGUF)
-
-Place in `ai-orchestrator/models/`:
-
-| Role            | Model                    | Suggested file            |
-|-----------------|--------------------------|---------------------------|
-| Planner / Synth | Llama 3.1 8B Q4_K_M      | `llama-3.1-8b.gguf`       |
-| Reasoning       | DeepSeek-R1 7B Q4_K_M    | `deepseek-r1.gguf`        |
-| Coding          | DeepSeek-Coder 6.7B Q4_K_M | `deepseek-coder.gguf`   |
-
-## 3. Run
-
-From `ai-orchestrator/` (same folder as `main.py`):
+## Running
 
 ```powershell
 cd "D:\AI\Claude Code\Project ECHO\ai-orchestrator"
@@ -81,16 +104,145 @@ python main.py
 
 Type `exit` to quit.
 
-## 4. GTX 1080Ti
+---
 
-- Default: `n_gpu_layers=35`, `n_ctx=4096`.
-- If you run out of VRAM: set `n_gpu_layers=25` in `main.py` (`load_model`).
+## Project Mode Commands
+
+```
+!project new <name>      — create a new project and make it active
+!project resume <name>   — resume a paused project
+!project pause           — pause the active project
+!project status          — show active project goal and status
+```
+
+On startup, if a project was active in the last session, ECHO will offer to resume it.
+
+---
+
+## Custom Skills
+
+Add `.md` files to `config/skills/` with YAML front matter:
+
+```markdown
+---
+name: my_skill
+trigger_keywords:
+  - keyword1
+  - keyword2
+steps:
+  - action: llm_prompt
+    target: planner
+    args:
+      prompt: "Do X with {{input}}"
+    on_failure: skip
+success_criteria: "X completed."
+fallback_strategy: "Ask user for clarification."
+---
+Description of what this skill does.
+```
+
+Skills are compiled and cached automatically on startup. Matched by keyword (or embedding similarity if embedder is loaded).
+
+---
+
+## Configuration
+
+All feature flags in `config/settings.py`:
+
+```python
+THINKING_LOOP_ENABLED    = True   # iterative self-correction
+THINKING_LOOP_MAX_ITERS  = 8      # max iterations before committing
+THINKING_LOOP_THRESHOLD  = 0.75   # CriticAgent score to accept answer
+CONTEXT_CONTROLLER_ENABLED = True # semantic context trimming
+SKILL_COMPILER_ENABLED   = True   # .md skill injection
+TOOL_DISCOVERY_ENABLED   = True   # auto tool registration
+SELF_IMPROVEMENT_ENABLED = True   # background prompt patching
+GPU_SCHEDULER_ENABLED    = True   # cooperative VRAM scheduling
+SPECULATIVE_DECODING_ENABLED = True
+STREAM_BATCH_SIZE        = 12     # tokens per UI emit batch
+PROJECT_MODE_ENABLED     = True
+```
+
+---
+
+## Hardware
+
+Tuned for **GTX 1080Ti (11GB VRAM)**:
+- Default: `n_gpu_layers=35`, `n_ctx=4096`
+- Low VRAM: set `n_gpu_layers=25` in `main.py`
+- GPU scheduler yields VRAM to foreground tasks automatically
+
+---
 
 ## Structure
 
-- `config/persona.yaml` — tone and rules (single source of truth).
-- `core/` — planner, router, synthesis, persona.
-- `memory/` — short-term, long-term (FAISS), episodic, embeddings, importance, summarizer, decay.
-- `models/` — specialist wrappers (DeepSeek-R1, DeepSeek-Coder).
-- `tools/` — registry, file, shell, python.
-- `agents/` — executor, verifier, loop.
+```
+ai-orchestrator/
+├── config/
+│   ├── settings.py        — feature flags
+│   ├── persona.yaml       — ECHO's personality
+│   ├── agents.yaml        — per-agent personality traits
+│   ├── prompt_patches.json — self-improvement patches
+│   └── skills/            — .md skill definitions
+├── core/
+│   ├── orchestrator.py    — main entry point
+│   ├── planner.py         — intent decomposition
+│   ├── router.py          — specialist routing
+│   ├── synthesis.py       — output synthesis
+│   ├── gpu_scheduler.py   — VRAM cooperative scheduling
+│   ├── kv_cache.py        — system prompt hash tracking
+│   ├── quant_controller.py — quantization selection
+│   ├── speculative.py     — draft-verify decoding
+│   └── stream_batcher.py  — token batch buffering
+├── thinking/
+│   ├── loop.py            — ThinkingLoop (core cognitive engine)
+│   ├── graph.py           — ThoughtGraph (SQLite persistence)
+│   └── context.py         — ContextController (semantic trimming)
+├── agents/
+│   ├── critic_agent.py    — quality gatekeeper
+│   ├── executor.py        — tool executor
+│   └── loop.py            — agent execution loop
+├── memory/
+│   ├── short_term.py
+│   ├── long_term.py       — FAISS vector store
+│   └── embeddings.py      — BGE-Large embeddings
+├── tools/
+│   ├── discovery.py       — auto tool registration
+│   ├── file_tools.py
+│   ├── shell_tools.py
+│   └── python_tools.py
+├── skills/
+│   └── compiler.py        — .md → CompiledSkill compiler
+├── intelligence/
+│   ├── self_improvement.py — background performance analysis
+│   └── memory.db          — SQLite (memory + thought_graph + projects)
+├── projects/
+│   ├── manager.py         — project CRUD
+│   └── context.py         — project context builder
+└── models/                — GGUF model files (not in git)
+```
+
+---
+
+## Tests
+
+```powershell
+cd "D:\AI\Claude Code\Project ECHO\ai-orchestrator"
+venv\Scripts\activate.bat
+venv\Scripts\python -m pytest tests/ -v --tb=short
+```
+
+---
+
+## Implementation Plans
+
+Detailed phase-by-phase implementation plans in `docs/superpowers/plans/`:
+
+| Plan | Features |
+|------|---------|
+| `phase1-foundation` | ThinkingLoop, ThoughtGraph, ContextController |
+| `phase2-agent-intelligence` | Personalities, SkillCompiler |
+| `phase3-self-improvement` | ToolDiscovery, SelfImprovementEngine |
+| `phase4-inference-performance` | KVCache, QuantController, GPUScheduler |
+| `phase5-streaming` | SpeculativeDecoding, StreamBatcher, Streaming Pipeline |
+| `phase6-project-mode` | AI Project Mode |
