@@ -129,6 +129,16 @@ class UACPPayload:
     guidance: str = ""   # actionable revision instruction for ThinkingLoop
 ```
 
+Also add `"guidance": self.guidance` to the existing `to_dict()` method so serialization includes it:
+
+```python
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            ...existing fields...,
+            "guidance": self.guidance,   # ADD this line
+        }
+```
+
 - [ ] **Step 4: Run test to verify it passes**
 
 ```bash
@@ -279,6 +289,9 @@ Respond ONLY in valid JSON format:
 
         try:
             if hasattr(self.model, "create_chat_completion"):
+                # Bypass create_chat_completion: some GGUFs lack chat templates,
+                # causing a "dict object has no attribute value" crash inside llama_cpp.
+                # Use raw __call__ path instead.
                 formatted_prompt = (
                     f"Q: {prompt}\n"
                     f"A:\n```json\n{{"
@@ -429,6 +442,20 @@ def test_project_id_stored(graph):
     graph.write("s1", None, 0, "q", "c", 0.7, project_id="proj_abc")
     rows = graph.query_by_session("s1")
     assert rows[0]["project_id"] == "proj_abc"
+
+
+def test_prune_old_thoughts(graph):
+    """prune_old_thoughts() removes rows older than ttl_days."""
+    import sqlite3, datetime
+    # Write a row then backdating it to 40 days ago
+    thought_id = graph.write("s1", None, 0, "q", "c", 0.5)
+    old_ts = (datetime.datetime.utcnow() - datetime.timedelta(days=40)).isoformat()
+    conn = sqlite3.connect(graph.db_path)
+    conn.execute("UPDATE thought_graph SET created_at = ? WHERE id = ?", (old_ts, thought_id))
+    conn.commit()
+    conn.close()
+    graph.prune_old_thoughts(ttl_days=30)
+    assert graph.query_by_session("s1") == []
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -957,18 +984,22 @@ def test_think_stops_at_max_iters(mock_components):
 
 
 def test_think_injects_critique_feedback_on_retry(mock_components):
-    """On retry, critique guidance must be appended to short_memory."""
+    """On retry, critique guidance AND analysis must be injected into context."""
     planner, agent_loop, synthesizer, critic, graph = mock_components
-    critic.evaluate.side_effect = [
-        _make_payload(0.4, "Fix the logic."),
-        _make_payload(0.9),
-    ]
+    low_payload = UACPPayload(
+        agent="critic",
+        confidence=0.4,
+        analysis="Logic is wrong.",
+        guidance="Fix the logic.",
+    )
+    critic.evaluate.side_effect = [low_payload, _make_payload(0.9)]
     loop = ThinkingLoop(planner, agent_loop, synthesizer, critic, graph)
     asyncio.run(loop.think("q", "initial context", []))
 
-    # Second call to planner should receive context with critique embedded
+    # Second call to planner should receive context with both analysis and guidance
     second_call_context = planner.plan.call_args_list[1][0][1]
     assert "Fix the logic." in second_call_context
+    assert "Logic is wrong." in second_call_context
 
 
 def test_think_writes_to_thought_graph(mock_components, tmp_path):
@@ -982,6 +1013,23 @@ def test_think_writes_to_thought_graph(mock_components, tmp_path):
     rows = graph.query_by_session(loop._last_session_id)
     assert len(rows) == 2
     assert any(r["selected"] for r in rows)
+
+
+def test_context_controller_trim_called_each_iteration(mock_components):
+    """ContextController.trim() must be invoked on every iteration."""
+    from unittest.mock import patch
+    planner, agent_loop, synthesizer, critic, graph = mock_components
+    critic.evaluate.side_effect = [_make_payload(0.3), _make_payload(0.9)]
+
+    from thinking.context import ContextController
+    mock_ctrl = MagicMock(spec=ContextController)
+    mock_ctrl.trim.return_value = ["ctx"]
+    mock_ctrl.default_budget.return_value = 3000
+
+    loop = ThinkingLoop(planner, agent_loop, synthesizer, critic, graph,
+                        context_controller=mock_ctrl)
+    asyncio.run(loop.think("q", "ctx", []))
+    assert mock_ctrl.trim.call_count == 2  # once per iteration
 
 
 def test_think_stream_yields_events(mock_components):
@@ -1089,33 +1137,33 @@ class ThinkingLoop:
         return best_answer
 
     async def think_stream(self, user_input: str, context: str, memories: list):
-        """Streaming async generator: yields typed partial result dicts."""
+        """Streaming async generator: yields typed partial result dicts.
+
+        Delegates to _run_iteration() for the core pipeline (including
+        ContextController trimming) and wraps results in typed events.
+
+        Note: The "token" event carries the full synthesizer output in Phase 1.
+        Phase 5 (StreamBatcher) will replace this with true token-level batches.
+        """
         session_id = uuid.uuid4().hex
         self._last_session_id = session_id
         parent_id = None
         current_context = context
+        answer = ""  # guard against UnboundLocalError if max_iters == 0
 
         for iteration in range(self._max_iters):
-            # Signal: planning started
-            plan = self._planner.plan(user_input, current_context,
-                                      self._format_memories(memories))
-            yield {"type": "plan", "iteration": iteration,
-                   "data": plan.task}
+            yield {"type": "plan", "iteration": iteration, "data": user_input}
 
-            # Execute tools
-            tool_results = []
-            if plan.tool_calls:
-                tool_results = await self._agent_loop.run(plan, plan.tool_calls)
-                for i, r in enumerate(tool_results):
-                    yield {"type": "tool_result", "index": i, "data": str(r)}
+            answer, payload, tool_results = await self._run_iteration(
+                user_input, current_context, memories
+            )
 
-            # Synthesize
-            outputs = {"tools": tool_results}
-            answer = self._synthesizer.synthesize(plan, outputs)
+            for i, r in enumerate(tool_results):
+                yield {"type": "tool_result", "index": i, "data": str(r)}
+
+            # Phase 1 stub: emit full answer as single "token" event.
+            # Phase 5 StreamBatcher will replace this with batched token chunks.
             yield {"type": "token", "data": answer}
-
-            # Critique
-            payload = self._critic.evaluate({"output": answer, "task_id": session_id})
             yield {"type": "critique", "score": payload.confidence, "iteration": iteration}
 
             thought_id = self._graph.write(
@@ -1143,7 +1191,14 @@ class ThinkingLoop:
 
     async def _run_iteration(self, user_input: str, context: str, memories: list):
         """Execute one planner → agent_loop → synthesizer → critic cycle."""
-        plan = self._planner.plan(user_input, context, self._format_memories(memories))
+        # Trim context to fit within the token budget before each iteration
+        all_chunks = [context] + self._format_memories(memories)
+        trimmed = self._context_ctrl.trim(user_input, all_chunks,
+                                          self._context_ctrl.default_budget())
+        trimmed_context = trimmed[0] if trimmed else ""
+        trimmed_memories = trimmed[1:] if len(trimmed) > 1 else []
+
+        plan = self._planner.plan(user_input, trimmed_context, trimmed_memories)
         tool_results = []
         if plan.tool_calls:
             tool_results = await self._agent_loop.run(plan, plan.tool_calls)
@@ -1154,8 +1209,8 @@ class ThinkingLoop:
 
     def _build_revision_context(self, prev_context: str, payload, iteration: int) -> str:
         feedback = (
-            f"\n[Iteration {iteration + 1} critique — score {payload.confidence:.2f}]: "
-            f"{payload.guidance}"
+            f"\nPrevious attempt scored {payload.confidence:.2f}/1.0 because: "
+            f"{payload.analysis}. Revise by: {payload.guidance}"
         )
         return prev_context + feedback
 
@@ -1172,7 +1227,7 @@ class ThinkingLoop:
 ```bash
 venv\Scripts\python -m pytest tests/test_thinking_loop.py -v
 ```
-Expected: 8 passed.
+Expected: 9 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -1339,7 +1394,7 @@ else:
 ```bash
 venv\Scripts\python -m pytest tests/test_protocol.py tests/test_critic_guidance.py tests/test_thought_graph.py tests/test_context_controller.py tests/test_thinking_loop.py tests/test_orchestrator_integration.py -v
 ```
-Expected: All tests pass (21+ tests).
+Expected: All tests pass (22+ tests).
 
 - [ ] **Step 5: Smoke test — start ECHO and send one message**
 
