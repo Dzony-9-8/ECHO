@@ -460,6 +460,55 @@ CREATE TABLE IF NOT EXISTS project_artifacts (
 
 ---
 
+## Cross-Cutting Concerns
+
+### Feature Flags (`config/settings.py`)
+
+All feature flags live in a single file. This is the authoritative list:
+
+```python
+# config/settings.py
+THINKING_LOOP_ENABLED   = True
+THINKING_LOOP_MAX_ITERS = 8
+THINKING_LOOP_THRESHOLD = 0.75
+CONTEXT_CONTROLLER_ENABLED = True
+STREAM_BATCH_SIZE       = 12
+SPECULATIVE_DECODING_ENABLED = True
+GPU_SCHEDULER_ENABLED   = True
+SKILL_COMPILER_ENABLED  = True
+TOOL_DISCOVERY_ENABLED  = True
+SELF_IMPROVEMENT_ENABLED = True
+PROJECT_MODE_ENABLED    = True
+```
+
+Components read from `settings` at init time. Any flag set to `False` causes that component to skip its initialization and the code path that calls it falls back to the legacy behavior.
+
+---
+
+### Database Migration Strategy
+
+No migration framework is needed. Every new component that writes to `intelligence/memory.db` runs `CREATE TABLE IF NOT EXISTS` in its `__init__()`. This is idempotent — running against an existing populated database is safe. The `thought_graph`, `projects`, and `project_artifacts` tables are created this way. The existing `MemoryManager` tables are untouched.
+
+**Path:** All components use the absolute-path pattern from §3:
+```python
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+db_path  = os.path.join(base_dir, "intelligence", "memory.db")
+```
+
+---
+
+### ThoughtGraph Retention Policy
+
+Without pruning, `thought_graph` grows ~100 rows/day under normal use. A background task (added to `BackgroundScheduler`, runs weekly) prunes rows older than 30 days, keeping a maximum of 10,000 rows (deleting oldest-first when the cap is exceeded). Selected thoughts (`selected=TRUE`) are exempt from pruning for 90 days to preserve the best reasoning traces for self-improvement analysis.
+
+---
+
+### ThinkingLoop Catastrophic Failure Fallback
+
+If `ThinkingLoop.think()` raises an unhandled exception (e.g., the planner LLM crashes mid-loop), `Orchestrator.process()` catches it, logs the full traceback, and falls back to the legacy single-pass path (directly calling `planner.plan()` → `agent_loop.run()` → `synthesizer.synthesize()`). The user sees a response either way. The fallback path is the existing pre-loop code, extracted into `Orchestrator._legacy_process()` so both paths share a reference.
+
+---
+
 ## Implementation Order
 
 | Phase | Features | Rationale |
@@ -484,11 +533,11 @@ CREATE TABLE IF NOT EXISTS project_artifacts (
 - `core/kv_cache.py`, `core/speculative.py`, `core/quant_controller.py`
 - `core/stream_batcher.py`, `core/pipeline.py`, `core/gpu_scheduler.py`
 - `projects/__init__.py`, `projects/manager.py`, `projects/context.py`
-- `config/agents.yaml`, `config/prompt_patches.json`
+- `config/agents.yaml`, `config/prompt_patches.json`, `config/settings.py`
 - `tests/test_thinking_loop.py`, `tests/test_thought_graph.py`, `tests/test_context_controller.py`
 
 **Modified files:**
-- `core/orchestrator.py` — integrate `ThinkingLoop`, `GPUScheduler`, `QuantController`, project command parsing, `process_stream()` method
+- `core/orchestrator.py` — integrate `ThinkingLoop`, `GPUScheduler`, `QuantController`, project command parsing, `process_stream()` method, extract `_legacy_process()` fallback
 - `core/persona.py` — add `get_agent_persona()`
 - `agents/protocol.py` — add `guidance: str = ""` field to `UACPPayload`
 - `agents/critic_agent.py` — populate `guidance` field in `evaluate()` and `_heuristic_evaluate()`
