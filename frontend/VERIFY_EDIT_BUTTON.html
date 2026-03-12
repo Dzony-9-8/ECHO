@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Button Verification Test</title>
+    <style>
+        body {
+            margin: 0;
+            background: #212121;
+            color: #ececec;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            padding: 40px;
+        }
+
+        .test-section {
+            background: #1a1a1a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            border: 1px solid #334155;
+        }
+
+        .bubble {
+            max-width: 85%;
+            line-height: 1.6;
+            font-size: 1rem;
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .bubble.user {
+            background: #2f2f2f;
+            color: #ececec;
+            margin-left: auto;
+            border-radius: 20px;
+            padding: 10px 20px;
+        }
+
+        /* CRITICAL: This is the hover-based Edit button CSS */
+        .message-actions {
+            display: none;
+            position: absolute;
+            top: 8px;
+            right: 12px;
+            gap: 6px;
+            z-index: 10;
+        }
+
+        .bubble.user:hover .message-actions {
+            display: flex;
+        }
+
+        .action-btn {
+            background: rgba(51, 65, 85, 0.95);
+            color: #e2e8f0;
+            font-size: 13px;
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid #475569;
+            width: auto;
+            height: auto;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+            backdrop-filter: blur(4px);
+        }
+
+        .action-btn:hover {
+            background: #475569;
+            border-color: #64748b;
+            transform: translateY(-1px);
+        }
+
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+
+        .success {
+            background: #10b98133;
+            border: 1px solid #10b981;
+        }
+
+        .warning {
+            background: #f5970733;
+            border: 1px solid #f59707;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="test-section">
+        <h1>🔍 Edit Button Verification Test</h1>
+        <p>This standalone test verifies the Edit button CSS works correctly.</p>
+        <p><strong>Instructions:</strong> Hover your mouse over the message below. You should see "✎ Edit" appear in the
+            top-right corner.</p>
+    </div>
+
+    <div class="test-section">
+        <h2>Test Messages</h2>
+
+        <div class="bubble user">
+            <div>This is a test user message - HOVER OVER ME!</div>
+            <div class="message-actions">
+                <button class="action-btn" onclick="alert('Edit button works!')">✎ Edit</button>
+            </div>
+        </div>
+
+        <div class="bubble user">
+            <div>Another test message with more content to verify positioning</div>
+            <div class="message-actions">
+                <button class="action-btn" onclick="alert('Edit button works!')">✎ Edit</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="test-section">
+        <h2>Diagnostic Information</h2>
+        <div id="diagnostics"></div>
+    </div>
+
+    <script>
+        // Run diagnostics
+        const diagnostics = document.getElementById('diagnostics');
+
+        const editButtons = document.querySelectorAll('.action-btn');
+        const messageActions = document.querySelectorAll('.message-actions');
+        const userBubbles = document.querySelectorAll('.bubble.user');
+
+        let html = '<div class="status success">✅ Page loaded successfully</div>';
+        html += `<div class="status ${editButtons.length === 2 ? 'success' : 'warning'}">
+            ${editButtons.length === 2 ? '✅' : '⚠️'} Found ${editButtons.length} edit buttons (expected 2)
+        </div>`;
+        html += `<div class="status ${messageActions.length === 2 ? 'success' : 'warning'}">
+            ${messageActions.length === 2 ? '✅' : '⚠️'} Found ${messageActions.length} message-actions divs (expected 2)
+        </div>`;
+        html += `<div class="status ${userBubbles.length === 2 ? 'success' : 'warning'}">
+            ${userBubbles.length === 2 ? '✅' : '⚠️'} Found ${userBubbles.length} user bubbles (expected 2)
+        </div>`;
+
+        // Check CSS
+        const firstAction = messageActions[0];
+        if (firstAction) {
+            const styles = window.getComputedStyle(firstAction);
+            const displayValue = styles.display;
+            html += `<div class="status ${displayValue === 'none' ? 'success' : 'warning'}">
+                ${displayValue === 'none' ? '✅' : '⚠️'} .message-actions display: ${displayValue} (should be 'none' initially)
+            </div>`;
+        }
+
+        diagnostics.innerHTML = html;
+
+        // Add hover event listener for testing
+        userBubbles.forEach((bubble, index) => {
+            bubble.addEventListener('mouseenter', () => {
+                console.log(`Hovering over bubble ${index + 1}`);
+                const actions = bubble.querySelector('.message-actions');
+                const computedDisplay = window.getComputedStyle(actions).display;
+                console.log(`Actions display on hover: ${computedDisplay}`);
+            });
+        });
+
+        console.log('✅ Diagnostics complete');
+        console.log('📝 Hover over the messages to test the Edit button');
+    </script>
+</body>
+
+</html>

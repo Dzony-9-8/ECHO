@@ -1,0 +1,10 @@
+{
+    "model": "llama3",
+    "messages": [
+        {
+            "role": "user",
+            "content": "Hello"
+        }
+    ],
+    "stream": false
+}

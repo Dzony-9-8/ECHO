@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Edit Button Test</title>
+    <style>
+        body {
+            margin: 0;
+            background: #212121;
+            color: #ececec;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            padding: 40px;
+        }
+
+        .bubble {
+            max-width: 85%;
+            line-height: 1.6;
+            font-size: 1rem;
+            position: relative;
+        }
+
+        .bubble.user {
+            background: #2f2f2f;
+            color: #ececec;
+            margin-left: auto;
+            border-radius: 20px;
+            padding: 10px 20px;
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 20px;
+        }
+
+        .bubble-footer {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 4px;
+        }
+
+        .edit-btn-inline {
+            background: #334155;
+            color: #94a3b8;
+            font-size: 12px;
+            padding: 4px 10px;
+            border-radius: 4px;
+            border: 1px solid #475569;
+            width: auto;
+            height: auto;
+            opacity: 0.85;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 500;
+        }
+
+        .edit-btn-inline:hover {
+            opacity: 1;
+            background: #475569;
+            color: #e2e8f0;
+            border-color: #64748b;
+        }
+
+        .test-info {
+            background: #1a1a1a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            border: 1px solid #334155;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-info">
+        <h2>Edit Button CSS Test</h2>
+        <p>This is a standalone test to verify the Edit button styling works correctly.</p>
+        <p><strong>If you can see the "Edit" button below, the CSS is working!</strong></p>
+    </div>
+
+    <div class="bubble user">
+        <div>This is a test user message</div>
+        <div class="bubble-footer">
+            <button class="edit-btn-inline" onclick="alert('Edit button clicked!')">Edit</button>
+        </div>
+    </div>
+
+    <div class="bubble user">
+        <div>Another test message with more content to see how it looks</div>
+        <div class="bubble-footer">
+            <button class="edit-btn-inline" onclick="alert('Edit button clicked!')">Edit</button>
+        </div>
+    </div>
+
+    <script>
+        console.log('Edit button test page loaded');
+        console.log('Number of edit buttons found:', document.querySelectorAll('.edit-btn-inline').length);
+    </script>
+</body>
+</html>
