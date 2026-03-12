@@ -1366,8 +1366,23 @@ async def _legacy_process(self, user_input: str, plan, outputs: dict) -> str:
     return final_answer
 ```
 
-**3e — In `process()`, replace the synthesis section with:**
+**3e — In `process()`, delete lines 242–251 (the existing `agent_loop.run()` + reasoning + synthesis block) and replace them with:**
 
+The lines to DELETE are:
+```python
+outputs = await self.agent_loop.run(plan, plan.tool_calls) if plan.tool_calls else {}
+
+# If reasoning was required, or we escalated, we might need a reasoning step
+if plan.reasoning_required:
+    ...
+    outputs["reasoning"] = reasoner.run(user_input)
+
+print("\nAI: ", end="", flush=True)
+final_answer = self.synthesizer.synthesize(plan, outputs)
+print("\n")
+```
+
+Replace them with:
 ```python
 # --- ThinkingLoop or legacy ---
 if settings.THINKING_LOOP_ENABLED:
@@ -1402,7 +1417,7 @@ Expected: All tests pass (22+ tests).
 venv\Scripts\python main.py
 ```
 Type: `hello`
-Expected: ECHO responds normally (ThinkingLoop runs, no crash). Console shows `--- Iteration 0 ---` style output or similar.
+Expected: ECHO responds normally (ThinkingLoop runs, no crash). Console will show the AI response followed by a newline. No `--- ThinkingLoop failed` line should appear.
 
 If console shows `--- ThinkingLoop failed ... falling back to legacy ---`, the loop itself has a bug — fix before committing.
 
