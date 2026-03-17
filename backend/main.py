@@ -2430,6 +2430,17 @@ class Message(BaseModel):
     content: str
 
 
+class InstallRequest(BaseModel):
+    models: Optional[list[str]] = None
+    install_all: Optional[bool] = False
+
+
+class FileProcessRequest(BaseModel):
+    name: str
+    content_b64: str
+    mime_type: Optional[str] = ""
+
+
 class ChatRequest(BaseModel):
     messages: list[Message]
     model: Optional[str] = None
@@ -2442,6 +2453,7 @@ class ChatRequest(BaseModel):
     workflow: Optional[dict] = None  # v3.2: custom workflow definition
     project_id: Optional[str] = None  # v3.5: AI Project Mode — inject project context
     images: Optional[list[str]] = None  # base64 image strings attached to latest user message
+    attachments: Optional[list[dict]] = None  # v3.7: file attachments {name, type, content}
 
 
 class DocumentRequest(BaseModel):
@@ -3381,6 +3393,24 @@ async def chat(req: ChatRequest):
     user_messages = [m for m in req.messages if m.role == "user"]
     user_text = user_messages[-1].content if user_messages else ""
 
+    # ── v3.7: Inject file attachment content into user message ──────────
+    if req.attachments:
+        attachment_blocks = []
+        for att in req.attachments:
+            name = att.get("name", "file")
+            content = att.get("content", "")
+            if content:
+                attachment_blocks.append(
+                    f"[ATTACHED FILE: {name}]\n{content}\n[/ATTACHED FILE]"
+                )
+        if attachment_blocks:
+            user_text = "\n\n".join(attachment_blocks) + "\n\n" + user_text
+            # Also patch the last user message in the messages list
+            for msg in reversed(messages):
+                if msg["role"] == "user":
+                    msg["content"] = "\n\n".join(attachment_blocks) + "\n\n" + msg["content"]
+                    break
+
     # ── Feature #6: Inject relevant memories ────────────────────────────
     try:
         memories = await recall_relevant_memories(user_text, limit=3)
@@ -3533,6 +3563,10 @@ async def chat(req: ChatRequest):
                     async def progressive_pipeline_stream():
                         """Stream partial results as each agent completes (depth >= 1)."""
                         try:
+                            # Emit plan summary step
+                            plan_step = {"type": "step", "agent": "Planner", "text": f"Plan ready: {len(plan.subtasks)} task(s)", "status": "done"}
+                            yield f"data: {json.dumps(plan_step)}\n\n"
+
                             subtask_results: dict[str, str] = {}
                             completed: set[str] = set()
                             full_output_parts: list[str] = []
@@ -3547,6 +3581,11 @@ async def chat(req: ChatRequest):
                                     break
                                 ready.sort(key=lambda s: s.priority)
 
+                                # Emit start steps for all ready agents
+                                for st in ready:
+                                    start_step = {"type": "step", "agent": st.agent, "text": st.task[:60], "status": "start"}
+                                    yield f"data: {json.dumps(start_step)}\n\n"
+
                                 batch = await asyncio.gather(
                                     *[run_subtask(st, SYSTEM_PROMPT + depth_instruction, subtask_results, temperature, max_tokens)
                                       for st in ready],
@@ -3558,11 +3597,14 @@ async def chat(req: ChatRequest):
                                     task_id, text = res
                                     subtask_results[task_id] = text
                                     completed.add(task_id)
-                                    # Find agent name for this task_id
                                     agent_name = next(
                                         (st.agent for st in plan.subtasks if st.id == task_id),
                                         "Agent"
                                     )
+                                    # Emit done step for this agent
+                                    done_step = {"type": "step", "agent": agent_name, "text": "Completed", "status": "done"}
+                                    yield f"data: {json.dumps(done_step)}\n\n"
+
                                     chunk = f"\n\n---\n**[{agent_name}]**\n{text}\n"
                                     full_output_parts.append(chunk)
                                     sse_data = {"choices": [{"delta": {"content": chunk}}]}
@@ -3570,6 +3612,8 @@ async def chat(req: ChatRequest):
 
                             # Synthesis step
                             if len(subtask_results) > 1:
+                                sup_step = {"type": "step", "agent": "Supervisor", "text": "Synthesizing agent results", "status": "start"}
+                                yield f"data: {json.dumps(sup_step)}\n\n"
                                 parts_str = "\n\n".join(
                                     f"**[{st.agent}]**\n{subtask_results.get(st.id, '')}"
                                     for st in plan.subtasks
@@ -3580,6 +3624,8 @@ async def chat(req: ChatRequest):
                                 ]
                                 synth = await ollama_chat_text(synth_msgs, model=AGENT_MODEL_MAP.get("Supervisor", "llama3.2:3b"))
                                 if synth:
+                                    sup_done = {"type": "step", "agent": "Supervisor", "text": "Synthesis complete", "status": "done"}
+                                    yield f"data: {json.dumps(sup_done)}\n\n"
                                     sep = "\n\n---\n**[Supervisor — Final Synthesis]**\n"
                                     full_output_parts.append(sep + synth)
                                     sse_data = {"choices": [{"delta": {"content": sep + synth}}]}
@@ -3687,6 +3733,9 @@ async def chat(req: ChatRequest):
     _agent_states[active_agent]["lastActive"] = datetime.now(timezone.utc).isoformat()
 
     async def stream_and_track():
+        # Emit a single step event for direct streaming
+        direct_step = {"type": "step", "agent": active_agent, "text": "Processing request", "status": "start"}
+        yield f"data: {json.dumps(direct_step)}\n\n"
         token_count = 0
         full_response = ""
         try:
@@ -5431,6 +5480,131 @@ def _find_dist_dir() -> Path | None:
 
 _DIST_DIR = _find_dist_dir()
 print(f"[static] dist/ = {_DIST_DIR or 'NOT FOUND'}")
+
+
+# ── v3.7: System model detection ────────────────────────────────────────────
+@app.get("/api/system/models")
+async def get_system_models():
+    """Check which Ollama models are installed."""
+    required_models = [
+        {"name": "llama3.2:3b",       "label": "Main Model (LLaMA 3.2 3B)",   "required": True,  "size": "~2 GB"},
+        {"name": "qwen2.5-coder:3b",  "label": "Code Model (Qwen 2.5 Coder)", "required": False, "size": "~2 GB"},
+        {"name": "llava:7b",           "label": "Vision Model (LLaVA 7B)",     "required": False, "size": "~4 GB"},
+    ]
+    ollama_running = False
+    installed_names: set[str] = set()
+    try:
+        _c = await get_ollama_client()
+        resp = await _c.get(f"{OLLAMA_URL}/api/tags", timeout=4.0)
+        if resp.status_code == 200:
+            ollama_running = True
+            data = resp.json()
+            for m in data.get("models", []):
+                installed_names.add(m.get("name", "").split(":")[0])
+                installed_names.add(m.get("name", ""))
+    except Exception:
+        pass
+
+    models_out = []
+    for m in required_models:
+        base = m["name"].split(":")[0]
+        installed = m["name"] in installed_names or base in installed_names
+        models_out.append({**m, "installed": installed})
+
+    all_required_ok = ollama_running and all(
+        m["installed"] for m in models_out if m["required"]
+    )
+    return {
+        "ollama_running": ollama_running,
+        "models": models_out,
+        "all_required_ok": all_required_ok,
+    }
+
+
+@app.post("/api/system/install")
+async def install_models(req: InstallRequest):
+    """Open a terminal window to run ollama pull commands."""
+    import subprocess, sys
+    models_to_install: list[str] = []
+    if req.install_all:
+        models_to_install = ["llama3.2:3b", "qwen2.5-coder:3b", "llava:7b"]
+    elif req.models:
+        models_to_install = req.models
+
+    if not models_to_install:
+        return {"status": "error", "message": "No models specified"}
+
+    cmds = " && ".join(f"ollama pull {m}" for m in models_to_install)
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(
+                ["cmd", "/k", cmds],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+        elif sys.platform == "darwin":
+            script = f'tell application "Terminal" to do script "{cmds}"'
+            subprocess.Popen(["osascript", "-e", script])
+        else:
+            for term in ["gnome-terminal", "xterm", "konsole", "xfce4-terminal"]:
+                try:
+                    subprocess.Popen([term, "--", "bash", "-c", f"{cmds}; exec bash"])
+                    break
+                except FileNotFoundError:
+                    continue
+        return {"status": "ok", "models": models_to_install}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.post("/api/files/process")
+async def process_file(req: FileProcessRequest):
+    """Extract text from uploaded files (PDF, DOCX, text, code)."""
+    import base64, io
+    name = req.name
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    mime = req.mime_type or ""
+
+    try:
+        raw = base64.b64decode(req.content_b64)
+    except Exception as e:
+        return {"text": "", "type": "error", "error": str(e)}
+
+    text = ""
+    file_type = "text"
+
+    if ext == "pdf" or "pdf" in mime:
+        file_type = "pdf"
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(raw)) as pdf:
+                pages = [p.extract_text() or "" for p in pdf.pages]
+                text = "\n\n".join(pages).strip()
+        except Exception as e:
+            text = f"[PDF extraction failed: {e}]"
+
+    elif ext in ("docx", "doc") or "word" in mime:
+        file_type = "docx"
+        try:
+            from docx import Document
+            doc = Document(io.BytesIO(raw))
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+        except Exception as e:
+            text = f"[DOCX extraction failed: {e}]"
+
+    elif ext in ("png", "jpg", "jpeg", "gif", "webp", "bmp") or "image" in mime:
+        file_type = "image"
+        text = f"[Image file: {name}]"
+
+    else:
+        # Treat everything else as text (code files, markdown, csv, json, yaml, etc.)
+        file_type = "text"
+        try:
+            text = raw.decode("utf-8", errors="replace")
+        except Exception:
+            text = f"[Could not decode: {name}]"
+
+    word_count = len(text.split()) if text else 0
+    return {"text": text, "type": file_type, "word_count": word_count, "name": name}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

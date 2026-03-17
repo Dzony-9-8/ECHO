@@ -6,6 +6,9 @@ import ArtifactsPanel from "@/components/ArtifactsPanel";
 import { extractArtifacts } from "@/components/ArtifactsPanel";
 import StreamingIndicator from "@/components/StreamingIndicator";
 import { type ChatMessage as ChatMessageType, sendMessage, getBackendMode } from "@/lib/api";
+import { type Step } from "./ThinkingSteps";
+import { processFile } from "@/lib/api";
+import type { ChatStepEvent } from "@/lib/api";
 import { type FileAttachment, isTextFile, readFileText, formatFileSize } from "@/lib/files";
 import { useConversations } from "@/hooks/useConversations";
 import { useUsageAnalytics } from "@/hooks/useUsageAnalytics";
@@ -34,6 +37,7 @@ const WELCOME_MSG: ChatMessageType = {
 const ChatView = () => {
   const [messages, setMessages] = useState<ChatMessageType[]>([WELCOME_MSG]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [messageSteps, setMessageSteps] = useState<Map<string, Step[]>>(new Map());
   const [streamStartTime, setStreamStartTime] = useState(0);
   const [showPanel, setShowPanel] = useState(true);
   const [showCanvas, setShowCanvas] = useState(false);
@@ -240,17 +244,40 @@ const ChatView = () => {
 
     // Read text file content to append to the message sent to the backend
     let fileContentText = "";
+    const backendAttachments: Array<{ name: string; type: string; content: string }> = [];
+
     if (attachments && attachments.length > 0) {
       for (const fa of attachments) {
+        if (fa.type === "image") {
+          // Images are handled via the images[] array — skip here
+          continue;
+        }
+        const ext = fa.name.split(".").pop()?.toLowerCase() ?? "";
         if (isTextFile(fa.file) && fa.file.size < 2 * 1024 * 1024) {
           try {
             const text = await readFileText(fa.file);
-            fileContentText += `\n\n[Attached file: ${fa.name}]\n\`\`\`\n${text.slice(0, 10000)}\n\`\`\``;
+            const truncated = text.slice(0, 10000);
+            fileContentText += `\n\n[Attached file: ${fa.name}]\n\`\`\`\n${truncated}\n\`\`\``;
+            backendAttachments.push({ name: fa.name, type: "text", content: truncated });
           } catch {
             fileContentText += `\n[Attached file: ${fa.name} (${formatFileSize(fa.size)}) — could not read content]`;
           }
+        } else if (["pdf", "docx", "doc"].includes(ext) && getBackendMode() === "local") {
+          // Use backend to extract text from PDF/DOCX
+          try {
+            const result = await processFile(fa.name, fa.file);
+            if (result.text) {
+              const truncated = result.text.slice(0, 15000);
+              fileContentText += `\n\n[Attached ${result.type.toUpperCase()}: ${fa.name} — ${result.word_count} words extracted]\n${truncated}`;
+              backendAttachments.push({ name: fa.name, type: result.type, content: truncated });
+            } else {
+              fileContentText += `\n[Attached file: ${fa.name} — could not extract text]`;
+            }
+          } catch {
+            fileContentText += `\n[Attached file: ${fa.name} (${formatFileSize(fa.size)}, binary)]`;
+          }
         } else {
-          fileContentText += `\n[Attached file: ${fa.name} (${formatFileSize(fa.size)}, binary/non-text)]`;
+          fileContentText += `\n[Attached file: ${fa.name} (${formatFileSize(fa.size)})]`;
         }
       }
     }
@@ -315,6 +342,7 @@ const ChatView = () => {
     }
 
     try {
+      const msgId = assistantMsg.id;
       const response = await sendMessage(
         allForBackend,
         (chunk) => {
@@ -324,7 +352,7 @@ const ChatView = () => {
             rafRef.current = requestAnimationFrame(() => {
               const latest = pendingChunkRef.current;
               setMessages((prev) =>
-                prev.map((m) => (m.id === assistantMsg.id ? { ...m, content: latest } : m))
+                prev.map((m) => (m.id === msgId ? { ...m, content: latest } : m))
               );
               rafRef.current = null;
             });
@@ -332,7 +360,37 @@ const ChatView = () => {
         },
         depth ?? 1,
         model,
-        images
+        images,
+        (stepEvent: ChatStepEvent) => {
+          // Accumulate step events for this message
+          setMessageSteps((prev) => {
+            const existing = prev.get(msgId) ?? [];
+            const now = Date.now();
+            if (stepEvent.status === "start") {
+              return new Map(prev).set(msgId, [
+                ...existing,
+                {
+                  id: `${msgId}-${existing.length}`,
+                  agent: stepEvent.agent,
+                  text: stepEvent.text,
+                  status: "running" as const,
+                  startTime: now,
+                },
+              ]);
+            } else {
+              // Find the last "running" step for this agent and mark done
+              const updated = [...existing];
+              for (let i = updated.length - 1; i >= 0; i--) {
+                if (updated[i].agent === stepEvent.agent && updated[i].status === "running") {
+                  updated[i] = { ...updated[i], status: "done" as const, endTime: now };
+                  break;
+                }
+              }
+              return new Map(prev).set(msgId, updated);
+            }
+          });
+        },
+        backendAttachments.length > 0 ? backendAttachments : undefined
       );
 
       const finalContent = response || assistantMsg.content;
@@ -616,6 +674,8 @@ const ChatView = () => {
               <ChatMessage
                 key={msg.id}
                 message={msg}
+                steps={messageSteps.get(msg.id)}
+                isStreaming={isStreaming && msg.status === "streaming"}
                 onEdit={msg.id !== "welcome" ? handleEditMessage : undefined}
                 onRegenerate={msg.id !== "welcome" ? handleRegenerate : undefined}
                 onBranch={msg.id !== "welcome" ? handleBranch : undefined}

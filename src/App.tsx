@@ -12,6 +12,7 @@ import ResetPassword from "./pages/ResetPassword";
 import SharedView from "./pages/SharedView";
 import NotFound from "./pages/NotFound";
 import SplashScreen from "@/components/SplashScreen";
+import ModelSetupModal from "@/components/ModelSetupModal";
 
 const queryClient = new QueryClient();
 
@@ -31,6 +32,7 @@ const AuthRoute = ({ children }: { children: React.ReactNode }) => {
 
 const App = () => {
   const [showSplash, setShowSplash] = useState(true);
+  const [setupDismissed, setSetupDismissed] = useState(false);
   const handleSplashComplete = useCallback(() => setShowSplash(false), []);
 
   return (
@@ -41,6 +43,9 @@ const App = () => {
             <Toaster />
             <Sonner />
             {showSplash && <SplashScreen onComplete={handleSplashComplete} />}
+            {!showSplash && !setupDismissed && (
+              <ModelSetupModal onDismiss={() => setSetupDismissed(true)} />
+            )}
             <BrowserRouter>
               <Routes>
                 <Route path="/auth" element={<AuthRoute><Auth /></AuthRoute>} />

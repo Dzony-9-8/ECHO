@@ -22,6 +22,12 @@ export const setBackendMode = (mode: BackendMode) => {
   localStorage.setItem("echo_backend_mode", mode);
 };
 
+export interface ChatStepEvent {
+  agent: string;
+  text: string;
+  status: "start" | "done" | "error";
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -114,7 +120,8 @@ export const fetchSystemMetrics = async (): Promise<RealSystemMetrics | null> =>
 // Parse SSE stream token-by-token
 const parseSSEStream = async (
   response: Response,
-  onDelta: (text: string) => void
+  onDelta: (text: string) => void,
+  onStep?: (step: ChatStepEvent) => void
 ): Promise<string> => {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("No response body");
@@ -142,6 +149,10 @@ const parseSSEStream = async (
 
       try {
         const parsed = JSON.parse(jsonStr);
+        if (parsed.type === "step" && onStep) {
+          onStep({ agent: parsed.agent || "", text: parsed.text || "", status: parsed.status || "done" });
+          continue;
+        }
         const content = parsed.choices?.[0]?.delta?.content as string | undefined;
         if (content) {
           fullText += content;
@@ -166,6 +177,10 @@ const parseSSEStream = async (
       if (jsonStr === "[DONE]") continue;
       try {
         const parsed = JSON.parse(jsonStr);
+        if (parsed.type === "step" && onStep) {
+          onStep({ agent: parsed.agent || "", text: parsed.text || "", status: parsed.status || "done" });
+          continue;
+        }
         const content = parsed.choices?.[0]?.delta?.content as string | undefined;
         if (content) {
           fullText += content;
@@ -219,7 +234,9 @@ const sendLocalMessage = async (
   messages: ChatMessage[],
   onChunk?: (text: string) => void,
   model?: string,
-  images?: string[]
+  images?: string[],
+  onStep?: (step: ChatStepEvent) => void,
+  attachments?: Array<{ name: string; type: string; content: string }>
 ): Promise<string> => {
   // Load pipeline settings from localStorage
   let enablePlanning = true;
@@ -243,6 +260,7 @@ const sendLocalMessage = async (
       enable_reflection: enableReflection,
       no_cache: noCache,
       ...(images && images.length > 0 ? { images } : {}),
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     }),
   });
 
@@ -250,10 +268,10 @@ const sendLocalMessage = async (
 
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
     if (onChunk) {
-      return parseSSEStream(response, onChunk);
+      return parseSSEStream(response, onChunk, onStep);
     }
     // No streaming callback — collect full text from SSE
-    return parseSSEStream(response, () => {});
+    return parseSSEStream(response, () => {}, onStep);
   }
 
   const data = await response.json();
@@ -266,15 +284,42 @@ export const sendMessage = async (
   onChunk?: (text: string) => void,
   depth: number = 1,
   model?: string,
-  images?: string[]
+  images?: string[],
+  onStep?: (step: ChatStepEvent) => void,
+  attachments?: Array<{ name: string; type: string; content: string }>
 ): Promise<string> => {
   const mode = getBackendMode();
 
   if (mode === "local") {
-    return sendLocalMessage(messages, onChunk, model, images);
+    return sendLocalMessage(messages, onChunk, model, images, onStep, attachments);
   }
 
   return sendCloudMessage(messages, depth, onChunk, model);
+};
+
+// Process an uploaded file — extract text from PDF/DOCX/text files
+export const processFile = async (
+  name: string,
+  file: File
+): Promise<{ text: string; type: string; word_count: number }> => {
+  const url = getBackendUrl();
+  const b64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+
+  const resp = await fetch(`${url}/api/files/process`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, content_b64: b64, mime_type: file.type }),
+  });
+  if (!resp.ok) throw new Error(`File processing failed: ${resp.status}`);
+  return resp.json();
 };
 
 // Check backend health

@@ -13,6 +13,7 @@ import { useState, useMemo, lazy, Suspense, memo, useEffect } from "react";
 import { getBackendMode, submitFeedback, getBackendUrl, checkVisionStatus, analyzeImage } from "@/lib/api";
 import CodeBlock from "./CodeBlock";
 import BranchIndicator, { type BranchInfo } from "./BranchIndicator";
+import ThinkingSteps, { type Step } from "./ThinkingSteps";
 import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 import { getBranchesForMessage } from "@/lib/branches";
 
@@ -25,6 +26,8 @@ interface Props {
   onBranch?: (messageId: string) => void;
   onSelectBranch?: (conversationId: string) => void;
   onOpenInCanvas?: (lang: string, code: string) => void;
+  steps?: Step[];
+  isStreaming?: boolean;
 }
 
 /** Animated gradient bar shown while the model is thinking */
@@ -50,6 +53,8 @@ const ChatMessage = ({
   onBranch,
   onSelectBranch,
   onOpenInCanvas,
+  steps,
+  isStreaming,
 }: Props) => {
   const isUser    = message.role === "user";
   const [copied, setCopied]           = useState(false);
@@ -102,7 +107,7 @@ const ChatMessage = ({
 
   const tokenCount = useMemo(() => estimateTokens(message.content), [message.content]);
   const branches   = useMemo(() => getBranchesForMessage(message.id), [message.id]);
-  const isStreaming = message.status === "streaming";
+  const msgIsStreaming = message.status === "streaming";
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -132,7 +137,7 @@ const ChatMessage = ({
                 : "border-primary/35 bg-primary/8"
             }`}
             style={
-              isStreaming && !isUser
+              msgIsStreaming && !isUser
                 ? { animation: "pulse-glow 1.6s ease-in-out infinite", boxShadow: "0 0 0 2px hsl(142 70% 45% / 0.25)" }
                 : {}
             }
@@ -220,6 +225,10 @@ const ChatMessage = ({
               </div>
             </div>
           ) : (
+            <>
+              {steps && steps.length > 0 && (
+                <ThinkingSteps steps={steps} isStreaming={isStreaming ?? false} />
+              )}
             <div
               className={`inline-block text-left rounded-xl px-4 py-3 text-sm leading-relaxed max-w-[85%] transition-all ${
                 isUser
@@ -232,7 +241,7 @@ const ChatMessage = ({
                   : { boxShadow: "0 2px 10px hsl(0 0% 0% / 0.18)" }
               }
             >
-              {isStreaming && !message.content ? (
+              {msgIsStreaming && !message.content ? (
                 <StreamingBar />
               ) : (
                 <div className="prose prose-sm prose-invert max-w-none [&_code]:text-terminal-amber [&_code:not(pre_code)]:bg-muted [&_pre]:bg-transparent [&_pre]:border-none [&_pre]:p-0 [&_pre]:m-0">
@@ -280,16 +289,17 @@ const ChatMessage = ({
                   >
                     {message.content}
                   </ReactMarkdown>
-                  {isStreaming && message.content && (
+                  {msgIsStreaming && message.content && (
                     <span className="cursor-blink text-primary ml-0.5">▊</span>
                   )}
                 </div>
               )}
             </div>
+            </>
           )}
 
           {/* ── Hover action toolbar ── */}
-          {!editing && !isStreaming && (
+          {!editing && !msgIsStreaming && (
             <div
               className={`flex items-center gap-0.5 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200 ${
                 isUser ? "justify-end" : ""
@@ -374,5 +384,6 @@ export default memo(
   (prev, next) =>
     prev.message.id      === next.message.id &&
     prev.message.content === next.message.content &&
-    prev.message.status  === next.message.status,
+    prev.message.status  === next.message.status &&
+    prev.steps           === next.steps,
 );
