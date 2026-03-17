@@ -7,10 +7,10 @@ import { motion } from "framer-motion";
 import { ChatMessage as ChatMessageType } from "@/lib/api";
 import {
   Bot, User, Cpu, Image, FileText, Edit3, RefreshCw,
-  Copy, Check, Hash, GitBranch, ThumbsUp, ThumbsDown, Volume2,
+  Copy, Check, Hash, GitBranch, ThumbsUp, ThumbsDown, Volume2, Eye,
 } from "lucide-react";
-import { useState, useMemo, lazy, Suspense, memo } from "react";
-import { getBackendMode, submitFeedback, getBackendUrl } from "@/lib/api";
+import { useState, useMemo, lazy, Suspense, memo, useEffect } from "react";
+import { getBackendMode, submitFeedback, getBackendUrl, checkVisionStatus, analyzeImage } from "@/lib/api";
 import CodeBlock from "./CodeBlock";
 import BranchIndicator, { type BranchInfo } from "./BranchIndicator";
 import { estimateTokens, formatTokenCount } from "@/lib/tokens";
@@ -24,6 +24,7 @@ interface Props {
   onRegenerate?: (id: string) => void;
   onBranch?: (messageId: string) => void;
   onSelectBranch?: (conversationId: string) => void;
+  onOpenInCanvas?: (lang: string, code: string) => void;
 }
 
 /** Animated gradient bar shown while the model is thinking */
@@ -48,6 +49,7 @@ const ChatMessage = ({
   onRegenerate,
   onBranch,
   onSelectBranch,
+  onOpenInCanvas,
 }: Props) => {
   const isUser    = message.role === "user";
   const [copied, setCopied]           = useState(false);
@@ -55,6 +57,32 @@ const ChatMessage = ({
   const [editContent, setEditContent] = useState(message.content);
   const [feedback, setFeedback]       = useState<"up" | "down" | null>(null);
   const [speaking, setSpeaking]       = useState(false);
+  const [visionAvailable, setVisionAvailable] = useState(false);
+  const [analyzingImage, setAnalyzingImage]   = useState<string | null>(null);
+  const [visionResults, setVisionResults]     = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (getBackendMode() === "local") {
+      checkVisionStatus()
+        .then((s) => setVisionAvailable(s.available))
+        .catch(() => setVisionAvailable(false));
+    }
+  }, []);
+
+  const handleVisionAnalyze = async (previewUrl: string) => {
+    if (analyzingImage === previewUrl) return;
+    // Extract base64 from data URL
+    const b64 = previewUrl.includes(",") ? previewUrl.split(",")[1] : previewUrl;
+    setAnalyzingImage(previewUrl);
+    try {
+      const result = await analyzeImage(b64);
+      setVisionResults((prev) => ({ ...prev, [previewUrl]: result.description }));
+    } catch {
+      setVisionResults((prev) => ({ ...prev, [previewUrl]: "Vision analysis failed." }));
+    } finally {
+      setAnalyzingImage(null);
+    }
+  };
 
   const handleSpeak = async () => {
     if (speaking) return;
@@ -136,15 +164,32 @@ const ChatMessage = ({
           {message.files && message.files.length > 0 && (
             <div className={`flex gap-2 mb-2 flex-wrap ${isUser ? "justify-end" : ""}`}>
               {message.files.map((file, i) => (
-                <div key={i} className="rounded-md border border-border bg-muted/50 p-1.5 flex-shrink-0 hover:border-primary/40 transition-colors">
+                <div key={i} className="rounded-md border border-border bg-muted/50 p-1.5 flex-shrink-0 hover:border-primary/40 transition-colors max-w-[120px]">
                   {file.type === "image" && file.preview ? (
-                    <div className="relative">
-                      <img src={file.preview} alt={file.name} className="w-24 h-24 object-cover rounded" />
-                      <div className="absolute top-1 left-1 flex items-center gap-0.5 bg-background/80 rounded px-1 py-0.5">
-                        <Image className="w-2.5 h-2.5 text-terminal-magenta" />
-                        <span className="text-[8px] text-terminal-magenta font-mono">Vision</span>
+                    <>
+                      <div className="relative">
+                        <img src={file.preview} alt={file.name} className="max-w-xs max-h-64 object-contain rounded border border-border" />
+                        <div className="absolute top-1 left-1 flex items-center gap-0.5 bg-background/80 rounded px-1 py-0.5">
+                          <Image className="w-2.5 h-2.5 text-terminal-magenta" />
+                          <span className="text-[8px] text-terminal-magenta font-mono">IMG</span>
+                        </div>
                       </div>
-                    </div>
+                      {visionAvailable && (
+                        <button
+                          onClick={() => handleVisionAnalyze(file.preview!)}
+                          disabled={analyzingImage === file.preview}
+                          className="text-[9px] font-mono text-terminal-cyan hover:text-cyan-300 flex items-center gap-1 mt-1 disabled:opacity-50 disabled:cursor-wait"
+                        >
+                          <Eye className="w-3 h-3" />
+                          {analyzingImage === file.preview ? "Analyzing…" : "Analyze image"}
+                        </button>
+                      )}
+                      {visionResults[file.preview] && (
+                        <p className="text-[8px] font-mono text-muted-foreground mt-1 max-w-[200px] whitespace-pre-wrap">
+                          {visionResults[file.preview]}
+                        </p>
+                      )}
+                    </>
                   ) : (
                     <div className="w-24 h-16 flex flex-col items-center justify-center gap-1">
                       <FileText className="w-5 h-5 text-terminal-cyan" />
@@ -206,7 +251,14 @@ const ChatMessage = ({
                               </Suspense>
                             );
                           }
-                          return <CodeBlock language={match[1]}>{codeStr}</CodeBlock>;
+                          return (
+                            <CodeBlock
+                              language={match[1]}
+                              onOpenInCanvas={onOpenInCanvas}
+                            >
+                              {codeStr}
+                            </CodeBlock>
+                          );
                         }
                         return <code className={className} {...props}>{children}</code>;
                       },

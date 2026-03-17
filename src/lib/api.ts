@@ -218,7 +218,8 @@ const sendCloudMessage = async (
 const sendLocalMessage = async (
   messages: ChatMessage[],
   onChunk?: (text: string) => void,
-  model?: string
+  model?: string,
+  images?: string[]
 ): Promise<string> => {
   // Load pipeline settings from localStorage
   let enablePlanning = true;
@@ -241,6 +242,7 @@ const sendLocalMessage = async (
       enable_planning: enablePlanning,
       enable_reflection: enableReflection,
       no_cache: noCache,
+      ...(images && images.length > 0 ? { images } : {}),
     }),
   });
 
@@ -263,12 +265,13 @@ export const sendMessage = async (
   messages: ChatMessage[],
   onChunk?: (text: string) => void,
   depth: number = 1,
-  model?: string
+  model?: string,
+  images?: string[]
 ): Promise<string> => {
   const mode = getBackendMode();
 
   if (mode === "local") {
-    return sendLocalMessage(messages, onChunk, model);
+    return sendLocalMessage(messages, onChunk, model, images);
   }
 
   return sendCloudMessage(messages, depth, onChunk, model);
@@ -691,3 +694,36 @@ export const runCode = async (
     return null;
   }
 };
+
+// ── Vision API ────────────────────────────────────────────────────────────────
+
+export interface VisionStatus {
+  available: boolean;
+  model: string | null;
+  supported_models: string[];
+  install_hint: string | null;
+}
+
+export async function checkVisionStatus(): Promise<VisionStatus> {
+  const base = getBackendUrl();
+  const resp = await fetch(`${base}/api/vision/status`);
+  if (!resp.ok) throw new Error("Vision status check failed");
+  return resp.json();
+}
+
+export async function analyzeImage(
+  imageB64: string,
+  prompt?: string,
+): Promise<{ description: string; model: string }> {
+  const base = getBackendUrl();
+  const resp = await fetch(`${base}/api/vision/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      image_b64: imageB64,
+      prompt: prompt || "Describe this image in detail.",
+    }),
+  });
+  if (!resp.ok) throw new Error("Vision analysis failed");
+  return resp.json();
+}

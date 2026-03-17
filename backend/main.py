@@ -35,6 +35,8 @@ Endpoints:
     POST /api/projects/{id}/task          — v3.5: Add task to project
     DELETE /api/projects/{id}             — v3.5: Delete project
     GET  /api/speculative/status          — v3.5: Speculative decode model status
+    GET  /api/vision/status               — Vision model availability check
+    POST /api/vision/analyze              — Analyze image with local vision model (llava, etc.)
 
 Run:
     cd backend
@@ -131,6 +133,61 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+
+# ── v3.6: Prompt Injection Scanner ───────────────────────────────────────────
+import re as _re
+
+_INJECTION_PATTERNS = [
+    (_re.compile(r"(?i)ignore\s+(all\s+)?previous\s+instructions?"), "high", "prompt_override"),
+    (_re.compile(r"(?i)you\s+are\s+now\s+a\s+(different|new)"), "high", "identity_override"),
+    (_re.compile(r"(?i)\b(execute|eval)\s*\("), "high", "code_injection"),
+    (_re.compile(r"(?i)[;|&]{1,2}\s*(rm|curl|wget|bash|sh|cmd|powershell)"), "high", "shell_injection"),
+    (_re.compile(r"(?i)(send|post|upload|transmit).{0,50}(http|ftp|external)"), "high", "data_exfiltration"),
+    (_re.compile(r"(?i)base64.{0,30}(send|post|upload)"), "medium", "encoded_exfiltration"),
+    (_re.compile(r"(?i)(DAN\s+mode|jailbreak|do\s+anything\s+now)"), "high", "jailbreak"),
+]
+
+_SECRET_PATTERNS = [
+    (_re.compile(r"sk-[A-Za-z0-9_\-]{20,}"), "openai_key"),
+    (_re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}"), "anthropic_key"),
+    (_re.compile(r"AKIA[0-9A-Z]{16}"), "aws_access_key"),
+    (_re.compile(r"(?:ghp|gho|ghs|ghr|github_pat)_[A-Za-z0-9_]{36,}"), "github_token"),
+    (_re.compile(r"(?i)(?:postgres|mysql|mongodb)://[^\s\"']+"), "db_connection_string"),
+    (_re.compile(r"-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----"), "private_key"),
+    (_re.compile(r"sk_(?:live|test)_[A-Za-z0-9]{24,}"), "stripe_key"),
+    (_re.compile(r"xox[bpoas]-[A-Za-z0-9\-]{10,}"), "slack_token"),
+]
+
+_PII_PATTERNS = [
+    (_re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"), "email"),
+    (_re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "ssn"),
+    (_re.compile(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b"), "credit_card"),
+    (_re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"), "phone"),
+]
+
+
+def scan_injection(text: str) -> list[dict]:
+    """Scan for prompt injection attempts. Returns list of findings."""
+    findings = []
+    for pattern, level, name in _INJECTION_PATTERNS:
+        for m in pattern.finditer(text):
+            findings.append({"type": name, "level": level, "position": m.start()})
+    return findings
+
+
+def redact_sensitive(text: str) -> tuple[str, list[str]]:
+    """Redact PII and secrets from text. Returns (redacted_text, found_types)."""
+    found = []
+    for pattern, name in _SECRET_PATTERNS + _PII_PATTERNS:
+        new_text = pattern.sub(f"[REDACTED:{name}]", text)
+        if new_text != text:
+            found.append(name)
+            text = new_text
+    return text, found
+
+
+# Expose scan results via endpoint
+_injection_scan_log: list[dict] = []
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Path resolution (supports PyInstaller --onefile bundle)
@@ -394,6 +451,28 @@ AGENT_MODEL_MAP = {
     "Critic": "llama3.2:3b",
     "default": "llama3.2:3b",
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vision model support
+# ─────────────────────────────────────────────────────────────────────────────
+
+VISION_MODELS = ["llava", "llava-phi3", "llava:7b", "llava:13b", "moondream", "bakllava"]
+
+
+async def get_vision_model() -> str | None:
+    """Return the first available vision model from Ollama, or None."""
+    try:
+        client = await get_ollama_client()
+        resp = await client.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+        available = [m["name"] for m in resp.json().get("models", [])]
+        for vm in VISION_MODELS:
+            for a in available:
+                if vm.lower() in a.lower():
+                    return a
+    except Exception:
+        pass
+    return None
+
 
 # Model capability classification for smart routing
 MODEL_CAPABILITIES = {
@@ -849,6 +928,190 @@ class SentinelEngine:
 _sentinel = SentinelEngine()
 
 
+# ── v3.6: LoopGuard — prevents infinite agent loops ──────────────────────────
+class LoopGuard:
+    """Detects and prevents infinite loops in agent tool-call sequences.
+
+    Checks for: identical repeated calls (SHA256), ping-pong (A-B-A-B),
+    and poll budget exhaustion.
+    """
+    def __init__(self, identical_limit: int = 50, pingpong_limit: int = 4, poll_limit: int = 100):
+        self._seen: set[str] = set()
+        self._recent: list[str] = []
+        self._poll = 0
+        self._identical_limit = identical_limit
+        self._pingpong_limit = pingpong_limit
+        self._poll_limit = poll_limit
+
+    def check(self, tool_name: str, args: str = "") -> str | None:
+        """Returns error string if loop detected, else None."""
+        self._poll += 1
+        if self._poll > self._poll_limit:
+            return f"Poll budget exceeded ({self._poll}/{self._poll_limit})"
+
+        h = hashlib.sha256(f"{tool_name}:{args}".encode()).hexdigest()
+        if h in self._seen:
+            return f"Identical call loop detected: '{tool_name}'"
+        self._seen.add(h)
+
+        self._recent.append(tool_name)
+        if len(self._recent) > self._pingpong_limit:
+            self._recent.pop(0)
+        calls = self._recent
+        if len(calls) >= 4:
+            if calls[-1] == calls[-3] and calls[-2] == calls[-4] and calls[-1] != calls[-2]:
+                return f"Ping-pong loop: '{calls[-2]}' \u2194 '{calls[-1]}'"
+        return None
+
+    def reset(self):
+        self._seen.clear()
+        self._recent.clear()
+        self._poll = 0
+
+
+# ── v3.6: Bandit Model Router (Thompson Sampling) ────────────────────────────
+import math as _math
+import random as _random
+
+
+def _gamma_sample(shape: float) -> float:
+    """Marsaglia & Tsang method for gamma distribution sampling."""
+    if shape < 1.0:
+        return _gamma_sample(1.0 + shape) * (_random.random() ** (1.0 / shape))
+    d = shape - 1.0 / 3.0
+    c = 1.0 / _math.sqrt(9.0 * d)
+    while True:
+        x = _random.gauss(0, 1)
+        v = (1.0 + c * x) ** 3
+        if v > 0 and _math.log(_random.random()) < 0.5 * x * x + d - d * v + d * _math.log(v):
+            return d * v
+
+
+def _beta_sample(alpha: float, beta: float) -> float:
+    g1 = _gamma_sample(alpha)
+    g2 = _gamma_sample(beta)
+    return g1 / (g1 + g2) if (g1 + g2) > 0 else 0.5
+
+
+class BanditRouter:
+    """Thompson Sampling bandit for dynamic model selection.
+
+    Tracks success/failure per model and routes to statistically best performer.
+    Falls back to configured default when a model hasn't been tried.
+    """
+    def __init__(self, models: list[str]):
+        # Initialize with Bayesian priors (1.0 success, 1.0 failure)
+        self._arms: dict[str, dict[str, float]] = {
+            m: {"successes": 1.0, "failures": 1.0} for m in models
+        }
+        self._total_calls: int = 0
+        self._lock = asyncio.Lock()
+
+    async def select(self, preferred: str | None = None) -> str:
+        """Select model via Thompson Sampling. Returns preferred if not enough data."""
+        async with self._lock:
+            self._total_calls += 1
+            # Try untested models first (UCB1 exploration bonus)
+            untested = [m for m, v in self._arms.items()
+                        if v["successes"] + v["failures"] <= 2.0]
+            if untested:
+                return untested[0]
+            return max(self._arms, key=lambda m: _beta_sample(
+                self._arms[m]["successes"], self._arms[m]["failures"]
+            ))
+
+    async def update(self, model: str, success: bool, latency_ms: float = 0.0):
+        """Record outcome for a model call."""
+        async with self._lock:
+            if model not in self._arms:
+                self._arms[model] = {"successes": 1.0, "failures": 1.0}
+            # Latency penalty: slow responses are partial failures
+            reward = 1.0 if success else 0.0
+            if latency_ms > 10000:
+                reward *= 0.5  # Penalize very slow responses
+            if reward > 0.5:
+                self._arms[model]["successes"] += 1.0
+            else:
+                self._arms[model]["failures"] += 1.0
+
+    @property
+    def stats(self) -> dict:
+        return {
+            m: {
+                "successes": v["successes"],
+                "failures": v["failures"],
+                "win_rate": round(v["successes"] / (v["successes"] + v["failures"]), 3),
+                "thompson_sample": round(_beta_sample(v["successes"], v["failures"]), 3),
+            }
+            for m, v in self._arms.items()
+        }
+
+
+# ── v3.6: Skill Discovery from Execution Traces ──────────────────────────────
+from collections import defaultdict as _defaultdict
+
+_execution_traces: list[dict] = []  # {"agents": [...], "outcome": 0.0-1.0, "query": str}
+
+
+def record_trace(agents: list[str], outcome: float, query: str):
+    """Record an agent execution trace for skill discovery."""
+    _execution_traces.append({
+        "agents": agents,
+        "outcome": outcome,
+        "query": query[:100],
+        "ts": time.time(),
+    })
+    if len(_execution_traces) > 1000:
+        _execution_traces.pop(0)
+
+
+def discover_skills_from_traces(
+    min_freq: int = 3,
+    min_len: int = 2,
+    max_len: int = 5,
+    min_quality: float = 0.6,
+) -> list[dict]:
+    """Mine execution traces for high-value agent sequences."""
+    seq_stats: dict[tuple, dict] = _defaultdict(
+        lambda: {"count": 0, "total": 0.0, "examples": []}
+    )
+    for trace in _execution_traces:
+        agents = trace["agents"]
+        for length in range(min_len, min(max_len + 1, len(agents) + 1)):
+            for i in range(len(agents) - length + 1):
+                seq = tuple(agents[i:i + length])
+                seq_stats[seq]["count"] += 1
+                seq_stats[seq]["total"] += trace["outcome"]
+                if len(seq_stats[seq]["examples"]) < 3:
+                    seq_stats[seq]["examples"].append(trace.get("query", ""))
+
+    skills = []
+    for seq, stats in seq_stats.items():
+        avg = stats["total"] / stats["count"]
+        if stats["count"] >= min_freq and avg >= min_quality:
+            skills.append({
+                "agent_sequence": list(seq),
+                "frequency": stats["count"],
+                "avg_outcome": round(avg, 3),
+                "score": round(stats["count"] * avg, 2),
+                "examples": stats["examples"],
+                "auto_discovered": True,
+            })
+    return sorted(skills, key=lambda s: s["score"], reverse=True)
+
+
+# Initialize bandit router with known models (uses AGENT_MODEL_MAP defined at module level)
+_bandit_router: "BanditRouter | None" = None  # lazy-initialized after AGENT_MODEL_MAP
+
+
+def _get_bandit_router() -> "BanditRouter":
+    """Lazy-initialize the bandit router so AGENT_MODEL_MAP is fully populated."""
+    global _bandit_router
+    if _bandit_router is None:
+        _bandit_router = BanditRouter(list(set(AGENT_MODEL_MAP.values())))
+    return _bandit_router
+
+
 SYSTEM_PROMPT = """You are ECHO, an advanced AI orchestration system running locally on the user's machine. You are a multi-agent swarm intelligence framework with specialized agents:
 
 - **Planner**: Decomposes complex tasks into subtasks and assigns them to specialists
@@ -991,15 +1254,25 @@ async def select_model(task_text: str, preferred_model: str | None = None) -> st
     available = await get_loaded_models()
 
     # Pick first available candidate
+    best_model = None
     for model in candidates:
         if any(model in m for m in available):
-            return model
+            best_model = model
+            break
 
-    # Fallback to whatever is available
-    if available:
-        return available[0]
+    if best_model is None:
+        best_model = available[0] if available else AGENT_MODEL_MAP["default"]
 
-    return AGENT_MODEL_MAP["default"]
+    # v3.6: Let BanditRouter potentially override with a better-performing model
+    try:
+        bandit_choice = await _get_bandit_router().select(preferred=best_model)
+        # Only use bandit choice if it's actually available
+        if bandit_choice and any(bandit_choice in m for m in available):
+            return bandit_choice
+    except Exception:
+        pass
+
+    return best_model
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1476,11 +1749,13 @@ async def run_subtask(
     _agent_states[agent]["lastActive"] = datetime.now(timezone.utc).isoformat()
 
     result = ""
+    subtask_success = False
     try:
         result = await asyncio.wait_for(
             ollama_chat_text(messages, model=model, temperature=temperature, max_tokens=max_tokens),
             timeout=120,
         )
+        subtask_success = bool(result and len(result.strip()) > 0)
         return subtask.id, result or ""
     except asyncio.TimeoutError:
         _logger.error(f"Agent {agent} timed out on subtask {subtask.id}")
@@ -1496,6 +1771,11 @@ async def run_subtask(
         # v3.5: Record performance for Sentinel self-improvement
         try:
             _sentinel.record_performance(agent, len(result or ""), elapsed_ms)
+        except Exception:
+            pass
+        # v3.6: Update BanditRouter with outcome
+        try:
+            await _get_bandit_router().update(model, success=subtask_success, latency_ms=elapsed_ms)
         except Exception:
             pass
 
@@ -1600,11 +1880,15 @@ async def run_pipeline(
     system_prompt: str,
     temperature: float = 0.7,
     max_tokens: int = 2048,
+    user_text: str = "",
 ) -> dict[str, str]:
-    """Execute subtasks respecting dependencies. Parallel where possible."""
+    """Execute subtasks respecting dependencies. Parallel where possible.
+    v3.6: LoopGuard prevents infinite agent loops.
+    """
     results: dict[str, str] = {}
     completed: set[str] = set()
     all_ids = {st.id for st in plan.subtasks}
+    loop_guard = LoopGuard()  # v3.6: per-pipeline loop detection
 
     while len(completed) < len(plan.subtasks):
         # Find ready subtasks (dependencies satisfied)
@@ -1620,10 +1904,24 @@ async def run_pipeline(
         # Sort by priority (lower = higher priority) before parallel execution
         ready.sort(key=lambda s: s.priority)
 
+        # v3.6: LoopGuard check before execution
+        filtered_ready = []
+        for st in ready:
+            loop_err = loop_guard.check(st.agent, st.task[:50])
+            if loop_err:
+                _logger.warning(f"[LoopGuard] Skipping subtask {st.id} ({st.agent}): {loop_err}")
+                results[st.id] = f"[LoopGuard] Skipped: {loop_err}"
+                completed.add(st.id)
+            else:
+                filtered_ready.append(st)
+
+        if not filtered_ready:
+            continue
+
         # Execute ready subtasks in parallel
         tasks = [
             run_subtask(st, system_prompt, results, temperature, max_tokens)
-            for st in ready
+            for st in filtered_ready
         ]
         batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -1634,6 +1932,14 @@ async def run_pipeline(
             task_id, text = res
             results[task_id] = text
             completed.add(task_id)
+
+    # v3.6: Record execution trace for skill discovery
+    try:
+        agents_used = [st.agent for st in plan.subtasks]
+        outcome = sum(1 for v in results.values() if v and len(v) > 50) / max(len(results), 1)
+        record_trace(agents_used, outcome, user_text[:100] if user_text else "")
+    except Exception:
+        pass
 
     return results
 
@@ -1648,12 +1954,16 @@ REFLECTION_SYSTEM = """You are the Critic agent in the ECHO system. Evaluate the
 3. Clarity — is it well-structured and easy to understand?
 4. Hallucinations — does it contain made-up information?
 
+For each issue you identify, rate your confidence (0.0-1.0) that it is a genuine problem.
+Only report issues with confidence > 0.75. Lower confidence observations should be omitted.
+
 You MUST respond with ONLY a JSON object:
-{"score": 8, "issues": ["minor: could elaborate on X"], "improved_response": null}
+{"score": 8, "issues": [{"description": "could elaborate on X", "confidence": 0.85, "fix": "add detail about Y"}], "improved_response": null, "overall_score": 0.8}
 
 - score: 1-10 (10 = perfect)
-- issues: list of problems found (empty if none)
-- improved_response: null if score >= 7, otherwise provide a corrected version"""
+- issues: list of high-confidence problems found (empty if none); each has description, confidence (0-1), fix
+- improved_response: null if score >= 7, otherwise provide a corrected version
+- overall_score: float 0.0-1.0 quality estimate"""
 
 # v3.4: Deliberation voter system prompts — three specialist perspectives
 _VOTER_SYSTEMS = {
@@ -1763,8 +2073,17 @@ async def reflect_on_response(
         try:
             result = await ollama_chat_json(messages, model=critic_model)
             score = result.get("score", 10)
-            issues = result.get("issues", [])
+            raw_issues = result.get("issues", [])
             improved = result.get("improved_response")
+
+            # v3.6: Confidence-gated filtering — only keep high-confidence issues
+            issues = []
+            for issue in raw_issues:
+                if isinstance(issue, dict):
+                    if issue.get("confidence", 1.0) > 0.75:
+                        issues.append(issue.get("description", str(issue)))
+                elif isinstance(issue, str):
+                    issues.append(issue)  # legacy plain-string issues pass through
 
             reflection_info["loops"] += 1
             reflection_info["scores"].append(score)
@@ -2022,6 +2341,13 @@ Only include meaningful, reusable information. Return empty lists if nothing wor
 
         # Store episodic memory (v3.4: only if importance score passes threshold)
         episodic_summary = result.get("episodic_summary", "")
+        # v3.6: Redact PII/secrets from auto-extracted memories
+        try:
+            episodic_summary, _ep_redacted = redact_sensitive(episodic_summary)
+            if _ep_redacted:
+                _logger.info(f"[memory] auto_extract: redacted {_ep_redacted} from episodic summary")
+        except Exception:
+            pass
         if episodic_summary and importance_score(episodic_summary) >= _IMPORTANCE_THRESHOLD:
             coll = _get_memory_collection("episodic")
             if coll:
@@ -2042,6 +2368,11 @@ Only include meaningful, reusable information. Return empty lists if nothing wor
         for i, fact in enumerate(facts[:5]):  # Max 5 facts per conversation
             if not fact.strip():
                 continue
+            # v3.6: Redact PII from facts
+            try:
+                fact, _ = redact_sensitive(fact)
+            except Exception:
+                pass
             imp = importance_score(fact)
             if imp < _IMPORTANCE_THRESHOLD:
                 continue
@@ -2064,6 +2395,11 @@ Only include meaningful, reusable information. Return empty lists if nothing wor
         for i, strategy in enumerate(strategies[:3]):
             if not strategy.strip():
                 continue
+            # v3.6: Redact PII from strategies
+            try:
+                strategy, _ = redact_sensitive(strategy)
+            except Exception:
+                pass
             imp = importance_score(strategy)
             if imp < _IMPORTANCE_THRESHOLD:
                 continue
@@ -2105,6 +2441,7 @@ class ChatRequest(BaseModel):
     no_cache: Optional[bool] = False
     workflow: Optional[dict] = None  # v3.2: custom workflow definition
     project_id: Optional[str] = None  # v3.5: AI Project Mode — inject project context
+    images: Optional[list[str]] = None  # base64 image strings attached to latest user message
 
 
 class DocumentRequest(BaseModel):
@@ -2149,6 +2486,12 @@ class VoiceSpeakRequest(BaseModel):
     text: str
     rate: Optional[int] = 175   # words per minute
     volume: Optional[float] = 1.0  # 0.0 – 1.0
+
+
+class VisionRequest(BaseModel):
+    image_b64: str  # base64-encoded image (PNG/JPEG/WebP)
+    prompt: Optional[str] = "Describe this image in detail."
+    model: Optional[str] = None  # override vision model
 
 
 class SkillToolsRequest(BaseModel):
@@ -2996,6 +3339,28 @@ async def chat(req: ChatRequest):
     temperature = req.temperature or 0.7
     max_tokens = req.max_tokens or 2048
 
+    # ── v3.6: Security scan on incoming user text ────────────────────────
+    # Get user text early for scanning (full extraction happens below too)
+    _scan_user_msgs = [m for m in req.messages if m.role == "user"]
+    _scan_text = _scan_user_msgs[-1].content if _scan_user_msgs else ""
+    if _scan_text:
+        try:
+            injection_findings = scan_injection(_scan_text)
+            if injection_findings:
+                high_risk = [f for f in injection_findings if f["level"] == "high"]
+                _injection_scan_log.append({
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "findings": injection_findings,
+                    "text_preview": _scan_text[:100],
+                })
+                if len(_injection_scan_log) > 500:
+                    _injection_scan_log.pop(0)
+                if high_risk:
+                    _logger.warning(f"High-risk injection attempt detected: {high_risk}")
+                    # Don't block — log and continue, but strip the injection pattern
+        except Exception:
+            pass
+
     # Build message list
     depth_instruction = ""
     if req.depth and req.depth > 0:
@@ -3065,6 +3430,47 @@ async def chat(req: ChatRequest):
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
 
+    # ── Vision: if images attached, route directly to vision model ──────
+    if req.images and len(req.images) > 0:
+        vision_model = req.model or await get_vision_model()
+        if vision_model:
+            # Attach images to the last user message
+            for msg in reversed(messages):
+                if msg["role"] == "user":
+                    msg["images"] = req.images
+                    break
+
+            async def vision_stream():
+                payload = {
+                    "model": vision_model,
+                    "messages": messages,
+                    "stream": True,
+                    "options": {"num_keep": 256},
+                    "keep_alive": "10m",
+                }
+                _client = await get_ollama_client()
+                async with _client.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload, timeout=120.0) as resp:
+                    async for line in resp.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                            if chunk.get("done"):
+                                yield "data: [DONE]\n\n"
+                                break
+                            content = chunk.get("message", {}).get("content", "")
+                            if content:
+                                sse = {"choices": [{"delta": {"content": content}}]}
+                                yield f"data: {json.dumps(sse)}\n\n"
+                        except Exception:
+                            continue
+
+            return StreamingResponse(
+                vision_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+            )
+
     # ── v3.2: Custom workflow override ──────────────────────────────────
     if req.workflow:
         custom_agents = req.workflow.get("agents", [])
@@ -3087,7 +3493,7 @@ async def chat(req: ChatRequest):
                 overrides = "; ".join(f"{k}: {v}" for k, v in custom_sys_prompts.items())
                 wf_system += f"\n\n[WORKFLOW OVERRIDES] {overrides}"
             wf_plan = TaskPlan(subtasks=from_workflow)
-            results = await run_pipeline(wf_plan, wf_system, temperature, max_tokens)
+            results = await run_pipeline(wf_plan, wf_system, temperature, max_tokens, user_text=user_text)
             merged = "\n\n".join(results.values()) if results else ""
             if len(results) > 1:
                 synth_msgs = [
@@ -3197,7 +3603,7 @@ async def chat(req: ChatRequest):
                     )
                 else:
                     # Non-progressive: collect all results then stream
-                    results = await run_pipeline(plan, SYSTEM_PROMPT + depth_instruction, temperature, max_tokens)
+                    results = await run_pipeline(plan, SYSTEM_PROMPT + depth_instruction, temperature, max_tokens, user_text=user_text)
 
                     if len(results) == 1:
                         merged = list(results.values())[0]
@@ -3353,15 +3759,25 @@ async def store_memory(req: MemoryStoreRequest):
     if coll is None:
         raise HTTPException(status_code=503, detail="Memory system not available")
 
+    # v3.6: Redact PII/secrets before persisting to memory
+    content = req.content
+    try:
+        content_clean, redacted_types = redact_sensitive(content)
+        if redacted_types:
+            _logger.info(f"[memory] Redacted {redacted_types} from memory content")
+        content = content_clean
+    except Exception:
+        pass
+
     mem_id = f"{req.type[:3]}-{int(time.time() * 1000)}"
     metadata = {
-        "summary": (req.summary or req.content[:200]),
+        "summary": (req.summary or content[:200]),
         "tags": ",".join(req.tags or []),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     try:
-        coll.upsert(documents=[req.content], ids=[mem_id], metadatas=[metadata])
+        coll.upsert(documents=[content], ids=[mem_id], metadatas=[metadata])
         return {"status": "ok", "id": mem_id, "type": req.type}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store memory: {e}")
@@ -4193,6 +4609,39 @@ async def sentinel_improve():
     return result
 
 
+# ── v3.6: Security status endpoint ───────────────────────────────────────────
+
+@app.get("/api/security/status")
+async def security_status():
+    """Show recent injection scan findings."""
+    return {
+        "recent_scans": _injection_scan_log[-20:],
+        "total_flagged": len(_injection_scan_log),
+    }
+
+
+# ── v3.6: Bandit router stats endpoint ───────────────────────────────────────
+
+@app.get("/api/bandit/stats")
+async def bandit_stats():
+    """Show bandit router statistics per model."""
+    router = _get_bandit_router()
+    return {"stats": router.stats, "total_calls": router._total_calls}
+
+
+# ── v3.6: Skill discovery endpoint ───────────────────────────────────────────
+
+@app.get("/api/skills/discovered")
+async def get_discovered_skills():
+    """Return auto-discovered skill patterns from agent execution history."""
+    skills = discover_skills_from_traces()
+    return {
+        "skills": skills,
+        "traces_analyzed": len(_execution_traces),
+        "min_frequency": 3,
+    }
+
+
 # ── v3.5: Compiled Skills endpoint (Feature 9) ───────────────────────────────
 
 @app.get("/api/skills/compiled")
@@ -4392,6 +4841,55 @@ async def voice_speak(request: "VoiceSpeakRequest"):
     )
     t.start()
     return {"status": "speaking", "text": request.text[:100]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Vision endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.get("/api/vision/status")
+async def vision_status():
+    """Check whether a vision model is available in Ollama."""
+    model = await get_vision_model()
+    return {
+        "available": model is not None,
+        "model": model,
+        "supported_models": VISION_MODELS,
+        "install_hint": "ollama pull llava-phi3" if not model else None,
+    }
+
+
+@app.post("/api/vision/analyze")
+async def vision_analyze(req: VisionRequest):
+    """Analyze an image using a local vision model (llava, llava-phi3, etc.)"""
+    model = req.model or await get_vision_model()
+    if not model:
+        raise HTTPException(status_code=503, detail="No vision model available. Run: ollama pull llava-phi3")
+
+    # Ollama vision API uses the /api/chat endpoint with image in messages
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": req.prompt,
+                "images": [req.image_b64],  # Ollama accepts raw base64 (no data URL prefix)
+            }
+        ],
+        "stream": False,
+        "options": {"num_keep": 256},
+        "keep_alive": "10m",
+    }
+
+    client = await get_ollama_client()
+    try:
+        resp = await client.post(f"{OLLAMA_URL}/api/chat", json=payload, timeout=120.0)
+        resp.raise_for_status()
+        content = resp.json()["message"]["content"]
+        return {"description": content, "model": model}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Vision analysis failed: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

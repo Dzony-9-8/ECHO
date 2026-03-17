@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } fr
 import ChatMessage from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
 import SystemPanel from "@/components/SystemPanel";
+import ArtifactsPanel from "@/components/ArtifactsPanel";
+import { extractArtifacts } from "@/components/ArtifactsPanel";
 import StreamingIndicator from "@/components/StreamingIndicator";
 import { type ChatMessage as ChatMessageType, sendMessage, getBackendMode } from "@/lib/api";
 import { type FileAttachment, isTextFile, readFileText, formatFileSize } from "@/lib/files";
@@ -11,7 +13,7 @@ import ConversationList from "@/components/ConversationList";
 import ChatSettingsModal from "@/components/ChatSettingsModal";
 import ExportDialog from "@/components/ExportDialog";
 import ShareDialog from "@/components/ShareDialog";
-import { Menu, X, MessageSquareText, Settings, Download, ArrowLeft, GitBranch, Link2 } from "lucide-react";
+import { Menu, X, MessageSquareText, Settings, Download, ArrowLeft, GitBranch, Link2, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { estimateTokens, formatTokenCount } from "@/lib/tokens";
@@ -34,6 +36,7 @@ const ChatView = () => {
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamStartTime, setStreamStartTime] = useState(0);
   const [showPanel, setShowPanel] = useState(true);
+  const [showCanvas, setShowCanvas] = useState(false);
   const [showHistory, setShowHistory] = useState(true);
   const [showExport, setShowExport] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -207,6 +210,11 @@ const ChatView = () => {
     }
   };
 
+  // Open a specific code block in the artifacts canvas
+  const handleOpenInCanvas = useCallback((_lang: string, _code: string) => {
+    setShowCanvas(true);
+  }, []);
+
   // Determine the effective system prompt for the current conversation
   const getEffectiveSystemPrompt = useCallback((): string => {
     if (activeConversationId) {
@@ -221,7 +229,8 @@ const ChatView = () => {
     prevMessages: ChatMessageType[],
     attachments?: FileAttachment[],
     depth?: number,
-    model?: string
+    model?: string,
+    images?: string[]
   ) => {
     const filesMeta = attachments?.map((f) => ({
       name: f.name,
@@ -322,7 +331,8 @@ const ChatView = () => {
           }
         },
         depth ?? 1,
-        model
+        model,
+        images
       );
 
       const finalContent = response || assistantMsg.content;
@@ -345,6 +355,11 @@ const ChatView = () => {
       const latency = Date.now() - assistantMsg.timestamp.getTime();
       logUsage(assistantMsg.model || "unknown", totalMsgTokens, latency, convId || undefined);
       setAgentComplete(assistantMsg.agent || "ECHO Cloud", totalMsgTokens);
+
+      // Auto-open canvas if the response contains previewable code blocks
+      if (/```(html|css|javascript|js|jsx|tsx|svg)\b/i.test(finalContent)) {
+        setShowCanvas(true);
+      }
     } catch (err: any) {
       const errMsg = err?.message || "Connection failed";
 
@@ -371,8 +386,8 @@ const ChatView = () => {
     }
   };
 
-  const handleSend = async (content: string, attachments?: FileAttachment[], depth?: number, model?: string) => {
-    await doSend(content, messages, attachments, depth, model);
+  const handleSend = async (content: string, attachments?: FileAttachment[], depth?: number, model?: string, images?: string[]) => {
+    await doSend(content, messages, attachments, depth, model, images);
   };
 
   // Keyboard shortcuts
@@ -380,6 +395,7 @@ const ChatView = () => {
     onExport: () => setShowExport((v) => !v),
     onTogglePanel: () => setShowPanel((v) => !v),
     onToggleHistory: () => setShowHistory((v) => !v),
+    onToggleCanvas: () => setShowCanvas((v) => !v),
     onEscape: () => {
       setShowExport(false);
       setShowSettings(false);
@@ -575,6 +591,19 @@ const ChatView = () => {
           >
             <MessageSquareText className="w-3.5 h-3.5" />
           </button>
+
+          {/* Artifacts canvas toggle */}
+          <button
+            onClick={() => setShowCanvas((v) => !v)}
+            className={`p-1 rounded transition-colors ${
+              showCanvas
+                ? "text-primary bg-primary/10"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            title="Toggle Artifacts Canvas (Ctrl+K)"
+          >
+            <Layers className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         {/* Scanline overlay */}
@@ -591,6 +620,7 @@ const ChatView = () => {
                 onRegenerate={msg.id !== "welcome" ? handleRegenerate : undefined}
                 onBranch={msg.id !== "welcome" ? handleBranch : undefined}
                 onSelectBranch={handleSelectBranch}
+                onOpenInCanvas={handleOpenInCanvas}
               />
             ))}
             <div ref={messagesEndRef} />
@@ -613,6 +643,16 @@ const ChatView = () => {
       </div>
 
       {showPanel && <div className="hidden lg:block"><SystemPanel /></div>}
+
+      {showCanvas && (
+        <div className="hidden lg:flex">
+          <ArtifactsPanel
+            messages={messages}
+            isOpen={showCanvas}
+            onClose={() => setShowCanvas(false)}
+          />
+        </div>
+      )}
     </div>
   );
 };

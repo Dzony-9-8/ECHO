@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { Copy, Check, Terminal, Play, X, ExternalLink } from "lucide-react";
+import { Copy, Check, Terminal, Play, X, ExternalLink, Layers } from "lucide-react";
 
 // Languages that can be rendered live in an iframe
 const PREVIEWABLE_LANGS = new Set(["html", "css", "javascript", "js", "jsx", "tsx", "typescript", "ts"]);
@@ -36,6 +36,7 @@ try{${code.replace(/<\/script>/gi, "<\\/script>")}}catch(e){console.error('Error
 interface Props {
   language?: string;
   children: string;
+  onOpenInCanvas?: (lang: string, code: string) => void;
 }
 
 // Color-code language badges
@@ -61,7 +62,7 @@ const LANG_COLORS: Record<string, string> = {
 const getLangClass = (lang: string) =>
   LANG_COLORS[lang.toLowerCase()] ?? "text-primary border-primary/30 bg-primary/10";
 
-const CodeBlock = ({ language, children }: Props) => {
+const CodeBlock = ({ language, children, onOpenInCanvas }: Props) => {
   const [copied, setCopied] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const lang = (language || "code").toLowerCase();
@@ -113,6 +114,16 @@ const CodeBlock = ({ language, children }: Props) => {
               ) : (
                 <><Play className="w-3 h-3" /><span className="hidden group-hover:inline">Preview</span></>
               )}
+            </button>
+          )}
+          {canPreview && onOpenInCanvas && (
+            <button
+              onClick={() => onOpenInCanvas(lang, children)}
+              className="flex items-center gap-1 px-2 py-1 rounded text-[9px] font-mono transition-all active:scale-95 text-muted-foreground hover:text-terminal-cyan hover:bg-muted"
+              title="Open in Artifacts Canvas"
+            >
+              <Layers className="w-3 h-3" />
+              <span className="hidden group-hover:inline">Canvas</span>
             </button>
           )}
           <button

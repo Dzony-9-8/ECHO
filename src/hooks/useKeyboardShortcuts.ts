@@ -5,6 +5,7 @@ interface ShortcutHandlers {
   onTemplates?: () => void;
   onTogglePanel?: () => void;
   onToggleHistory?: () => void;
+  onToggleCanvas?: () => void;
   onEscape?: () => void;
 }
 
@@ -45,6 +46,13 @@ export const useKeyboardShortcuts = (handlers: ShortcutHandlers) => {
       if (isCtrl && e.key === "h") {
         e.preventDefault();
         handlers.onToggleHistory?.();
+        return;
+      }
+
+      // Ctrl+K — toggle artifacts canvas
+      if (isCtrl && e.key === "k") {
+        e.preventDefault();
+        handlers.onToggleCanvas?.();
         return;
       }
     };

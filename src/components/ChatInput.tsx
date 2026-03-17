@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Mic, MicOff, Paperclip, X, FileText, Layers } from "lucide-react";
+import { Send, Mic, MicOff, Paperclip, X, FileText, Layers, Image as ImageIcon } from "lucide-react";
 import {
   type FileAttachment,
   getFileType,
@@ -14,13 +14,20 @@ import PromptTemplates from "./PromptTemplates";
 import SlashCommandMenu, { type SlashCommand } from "./SlashCommandMenu";
 
 interface Props {
-  onSend: (message: string, files?: FileAttachment[], depth?: number, model?: string) => void;
+  onSend: (message: string, files?: FileAttachment[], depth?: number, model?: string, images?: string[]) => void;
   disabled?: boolean;
+}
+
+interface ImagePreview {
+  file: File;
+  b64: string;
+  url: string;
 }
 
 const ChatInput = ({ onSend, disabled }: Props) => {
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<FileAttachment[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<ImagePreview[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [depth, setDepth] = useState(1);
   const [model, setModel] = useState(getSelectedModel);
@@ -134,19 +141,38 @@ const ChatInput = ({ onSend, disabled }: Props) => {
         preview,
         size: file.size,
       });
+
+      // If image, also add to imagePreviews for vision sending
+      if (file.type.startsWith("image/")) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const result = e.target?.result as string;
+          // Strip data URL prefix: "data:image/png;base64," -> just the base64 part
+          const b64 = result.split(",")[1];
+          setImagePreviews((prev) => [...prev, { file, b64, url: result }]);
+        };
+        reader.readAsDataURL(file);
+      }
     }
     setFiles((prev) => [...prev, ...newFiles].slice(0, 10));
   }, []);
 
   const removeFile = (id: string) => {
+    const removing = files.find((f) => f.id === id);
     setFiles((prev) => prev.filter((f) => f.id !== id));
+    // Also remove from imagePreviews if it was an image
+    if (removing && removing.type === "image") {
+      setImagePreviews((prev) => prev.filter((p) => p.file !== removing.file));
+    }
   };
 
   const handleSubmit = () => {
     if ((!input.trim() && files.length === 0) || disabled) return;
-    onSend(input.trim(), files.length > 0 ? files : undefined, depth, model);
+    const imageB64s = imagePreviews.length > 0 ? imagePreviews.map((p) => p.b64) : undefined;
+    onSend(input.trim(), files.length > 0 ? files : undefined, depth, model, imageB64s);
     setInput("");
     setFiles([]);
+    setImagePreviews([]);
     setShowSlashMenu(false);
     localStorage.removeItem("echo_draft");
   };
@@ -326,7 +352,7 @@ const ChatInput = ({ onSend, disabled }: Props) => {
 
         <button
           onClick={handleSubmit}
-          disabled={(!input.trim() && files.length === 0) || disabled}
+          disabled={(!input.trim() && files.length === 0 && imagePreviews.length === 0) || disabled}
           className="p-2.5 rounded border border-primary bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         >
           <Send className="w-4 h-4" />
