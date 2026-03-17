@@ -2,7 +2,7 @@
 ECHO Portable Exe Builder
 ==========================
 Builds a single portable ECHO.exe that bundles:
-  - FastAPI backend (Ollama + ChromaDB)
+  - FastAPI backend (Ollama + ChromaDB + all v3.x features)
   - Vite/React frontend (pre-built dist/)
   - Skills directory
 
@@ -13,6 +13,7 @@ Prerequisites:
     pip install -r backend/requirements.txt   (includes pyinstaller)
     npm install                                (for frontend build)
     Ollama must be installed separately on the target machine.
+    Models are downloaded on first run via the in-app setup wizard.
 
 Output:
     build_output/ECHO.exe
@@ -69,7 +70,7 @@ def run(cmd: list[str], cwd: Path | None = None, description: str = ""):
 def main():
     print(r"""
     =============================================
-        ECHO Portable Exe Builder
+        ECHO Portable Exe Builder  v3.7
     =============================================
     """)
 
@@ -104,6 +105,7 @@ def main():
 
     # ── Step 4: Run PyInstaller ───────────────────────────────────────────
     hidden_imports = [
+        # uvicorn internals
         "uvicorn",
         "uvicorn.logging",
         "uvicorn.loops",
@@ -118,28 +120,88 @@ def main():
         "uvicorn.protocols.websockets.wsproto_impl",
         "uvicorn.lifespan",
         "uvicorn.lifespan.on",
+        # HTTP
         "httpx",
         "httpx._transports",
         "httpx._transports.default",
-        "psutil",
-        "GPUtil",
+        "h2",
+        "h2.connection",
+        "h2.config",
+        # FastAPI / Starlette
         "fastapi",
         "fastapi.middleware",
         "fastapi.middleware.cors",
         "pydantic",
+        "pydantic.v1",
         "starlette",
         "starlette.responses",
         "starlette.routing",
         "starlette.staticfiles",
         "starlette.middleware",
+        "starlette.middleware.cors",
         "anyio",
         "anyio._backends",
         "anyio._backends._asyncio",
+        # System / GPU
+        "psutil",
+        "GPUtil",
+        # ChromaDB
+        "chromadb",
+        "chromadb.api",
+        "chromadb.api.client",
+        "chromadb.db.impl",
+        "chromadb.db.impl.sqlite",
+        "chromadb.segment",
+        "chromadb.segment.impl",
+        "chromadb.segment.impl.vector",
+        "chromadb.segment.impl.vector.local_hnsw",
+        "chromadb.segment.impl.metadata",
+        "chromadb.segment.impl.metadata.sqlite",
+        "hnswlib",
+        # RAG / NLP
+        "rank_bm25",
+        "ollama",
+        # File processing
+        "pdfplumber",
+        "pdfminer",
+        "pdfminer.high_level",
+        "pdfminer.layout",
+        "docx",
+        "docx.shared",
+        # Web search / scraping
+        "duckduckgo_search",
+        "bs4",
+        "trafilatura",
+        "lxml",
+        "lxml.etree",
+        "lxml.html",
+        "cachetools",
+        # Watchdog
+        "watchdog",
+        "watchdog.observers",
+        "watchdog.events",
+        # Voice
+        "faster_whisper",
+        "faster_whisper.transcribe",
+        "ctranslate2",
+        "pyttsx3",
+        "pyttsx3.drivers",
+        "pyttsx3.drivers.sapi5",
+        # PyWebView (desktop window)
         "webview",
         "webview.platforms",
         "webview.platforms.winforms",
         "clr_loader",
         "pythonnet",
+        # Multiprocessing (sandboxed code runner)
+        "multiprocessing",
+        "multiprocessing.process",
+        "multiprocessing.queues",
+        # Standard lib extras
+        "email.mime.multipart",
+        "email.mime.text",
+        "hashlib",
+        "hmac",
     ]
 
     pyinstaller_cmd = [
@@ -147,11 +209,26 @@ def main():
         "--onefile",
         "--name", "ECHO",
         "--clean",
+        "--noconfirm",
         f"--add-data={BACKEND_DIST}{SEP}dist",
         f"--add-data={SKILLS_DIR}{SEP}skills",
         "--distpath", str(BUILD_OUTPUT),
         "--workpath", str(PROJECT_ROOT / "build_temp"),
         "--specpath", str(PROJECT_ROOT / "build_temp"),
+        # Exclude heavy ML libs that are not used at runtime
+        "--exclude-module", "torch",
+        "--exclude-module", "torchvision",
+        "--exclude-module", "tensorflow",
+        "--exclude-module", "matplotlib",
+        "--exclude-module", "scipy",
+        "--exclude-module", "sklearn",
+        "--exclude-module", "pandas",
+        "--exclude-module", "numpy",
+        "--exclude-module", "PIL",
+        "--exclude-module", "cv2",
+        "--exclude-module", "jupyter",
+        "--exclude-module", "notebook",
+        "--exclude-module", "IPython",
     ]
 
     for imp in hidden_imports:
@@ -190,14 +267,20 @@ def main():
     Output:  {exe_path}
     Size:    {size_mb:.1f} MB
 
-    To run:
-      1. Make sure Ollama is installed and running
-         (ollama serve)
-      2. Double-click ECHO.exe
-      3. Browser will open automatically
+    To distribute:
+      - Copy ECHO.exe to the target machine
+      - Target machine needs Ollama installed:
+          https://ollama.com/download
+      - On first run, ECHO will detect missing models
+        and offer to install them automatically
 
-    Note: ChromaDB data will be stored next to
-          the exe file in a chroma_db/ folder.
+    To run:
+      1. Double-click ECHO.exe
+      2. If models are missing, accept the install prompt
+      3. Browser opens automatically at localhost:8000
+
+    Note: ChromaDB data is stored next to ECHO.exe
+          in a chroma_db/ folder (auto-created).
     =============================================
     """)
 
