@@ -242,7 +242,28 @@ def main():
         description="Building portable exe with PyInstaller",
     )
 
-    # ── Step 5: Verify output ─────────────────────────────────────────────
+    # ── Step 5: Download Ollama installer into build_output/ ─────────────
+    OLLAMA_INSTALLER_URL = "https://ollama.com/download/OllamaSetup.exe"
+    ollama_installer = BUILD_OUTPUT / "OllamaSetup.exe"
+    if not ollama_installer.exists():
+        print(f"\n{'='*50}")
+        print("  Downloading Ollama installer...")
+        print(f"  {OLLAMA_INSTALLER_URL}")
+        print(f"{'='*50}\n")
+        try:
+            import urllib.request
+            BUILD_OUTPUT.mkdir(parents=True, exist_ok=True)
+            urllib.request.urlretrieve(OLLAMA_INSTALLER_URL, ollama_installer)
+            size_mb = ollama_installer.stat().st_size / (1024 * 1024)
+            print(f"[OK] OllamaSetup.exe downloaded ({size_mb:.0f} MB)")
+        except Exception as e:
+            print(f"[WARN] Could not download Ollama installer: {e}")
+            print("       Distribute ECHO.exe with OllamaSetup.exe manually, or")
+            print("       users can download it from https://ollama.com/download")
+    else:
+        print(f"[OK] OllamaSetup.exe already present in build_output/")
+
+    # ── Step 6: Verify output ─────────────────────────────────────────────
     exe_name = "ECHO.exe" if platform.system() == "Windows" else "ECHO"
     exe_path = BUILD_OUTPUT / exe_name
 
@@ -259,6 +280,7 @@ def main():
     if BACKEND_DIST.exists():
         shutil.rmtree(BACKEND_DIST, ignore_errors=True)
 
+    ollama_bundled = (BUILD_OUTPUT / "OllamaSetup.exe").exists()
     print(f"""
     =============================================
         BUILD SUCCESSFUL
@@ -266,20 +288,23 @@ def main():
 
     Output:  {exe_path}
     Size:    {size_mb:.1f} MB
+    {'Bundled: OllamaSetup.exe (distribute alongside ECHO.exe)' if ollama_bundled else 'Note: OllamaSetup.exe not bundled — users will be directed to download it'}
 
     To distribute:
-      - Copy ECHO.exe to the target machine
-      - Target machine needs Ollama installed:
-          https://ollama.com/download
-      - On first run, ECHO will detect missing models
-        and offer to install them automatically
+      Copy the entire build_output/ folder:
+        - ECHO.exe              (main application)
+        {'- OllamaSetup.exe       (Ollama installer, auto-launched if missing)' if ollama_bundled else ''}
 
-    To run:
+    On first run:
       1. Double-click ECHO.exe
-      2. If models are missing, accept the install prompt
-      3. Browser opens automatically at localhost:8000
+      2. ECHO detects if Ollama/models are missing
+      3. Click "Run Bundled Installer" to install Ollama
+      4. After Ollama installs, restart ECHO
+      5. Click "Install All Models" or "Install Main Only"
+      6. Wait for models to download (one-time, ~2–6 GB)
+      7. Enjoy ECHO!
 
-    Note: ChromaDB data is stored next to ECHO.exe
+    Note: ChromaDB data stored next to ECHO.exe
           in a chroma_db/ folder (auto-created).
     =============================================
     """)

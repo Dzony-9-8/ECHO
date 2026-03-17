@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, X, Loader2 } from "lucide-react";
+import { Check, X, Loader2, Download, ExternalLink } from "lucide-react";
 
 interface ModelInfo {
   name: string;
@@ -15,6 +15,12 @@ interface SystemModelsResponse {
   models: ModelInfo[];
 }
 
+interface InstallerInfo {
+  bundled: boolean;
+  path: string | null;
+  download_url: string;
+}
+
 interface Props {
   onDismiss: () => void;
 }
@@ -25,12 +31,19 @@ const ModelSetupModal = ({ onDismiss }: Props) => {
   const [unreachable, setUnreachable] = useState(false);
   const [installTriggered, setInstallTriggered] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [ollamaInstaller, setOllamaInstaller] = useState<InstallerInfo | null>(null);
+  const [ollamaInstalling, setOllamaInstalling] = useState(false);
+  const [ollamaInstallDone, setOllamaInstallDone] = useState(false);
 
   useEffect(() => {
-    fetch("http://localhost:8000/api/system/models")
-      .then((res) => res.json())
-      .then((json: SystemModelsResponse) => {
-        setData(json);
+    // Fetch model status and installer info in parallel
+    Promise.all([
+      fetch("http://localhost:8000/api/system/models").then((r) => r.json()),
+      fetch("http://localhost:8000/api/system/ollama-installer").then((r) => r.json()).catch(() => null),
+    ])
+      .then(([models, installer]: [SystemModelsResponse, InstallerInfo | null]) => {
+        setData(models);
+        if (installer) setOllamaInstaller(installer);
         setLoading(false);
       })
       .catch(() => {
@@ -38,6 +51,18 @@ const ModelSetupModal = ({ onDismiss }: Props) => {
         setLoading(false);
       });
   }, []);
+
+  const triggerOllamaInstall = async () => {
+    setOllamaInstalling(true);
+    try {
+      await fetch("http://localhost:8000/api/system/install-ollama", { method: "POST" });
+    } catch {
+      // backend opened browser/installer regardless
+    } finally {
+      setOllamaInstalling(false);
+      setOllamaInstallDone(true);
+    }
+  };
 
   // Don't show modal if everything is OK or backend is unreachable
   if (loading) {
@@ -130,20 +155,45 @@ const ModelSetupModal = ({ onDismiss }: Props) => {
           ))}
         </div>
 
-        {/* Ollama not running warning */}
+        {/* Ollama not running — install section */}
         {!data.ollama_running && (
           <div className="mb-4 p-3 rounded-md bg-terminal-amber/10 border border-terminal-amber/30">
-            <p className="text-terminal-amber text-xs leading-relaxed">
-              Ollama is not running. Install it from ollama.ai then restart ECHO.
+            <p className="text-terminal-amber text-xs leading-relaxed mb-3">
+              Ollama is not installed or not running. ECHO needs Ollama to use AI models locally.
             </p>
-            <a
-              href="https://ollama.ai"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-block mt-2 text-xs text-terminal-amber underline hover:text-terminal-amber/80 transition-colors"
-            >
-              → Open ollama.ai
-            </a>
+
+            {ollamaInstallDone ? (
+              <p className="text-xs text-primary">
+                ✓ {ollamaInstaller?.bundled
+                  ? "Installer launched — follow the setup wizard, then restart ECHO."
+                  : "Download page opened in your browser — install Ollama then restart ECHO."}
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={triggerOllamaInstall}
+                  disabled={ollamaInstalling}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold tracking-widest uppercase rounded-md bg-terminal-amber/20 border border-terminal-amber/60 text-terminal-amber hover:bg-terminal-amber/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {ollamaInstalling ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Download className="w-3 h-3" />
+                  )}
+                  {ollamaInstaller?.bundled ? "RUN BUNDLED INSTALLER" : "DOWNLOAD OLLAMA"}
+                </button>
+
+                <a
+                  href="https://ollama.com/download"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 text-xs tracking-widest uppercase rounded-md border border-border text-muted-foreground hover:text-terminal-amber hover:border-terminal-amber/40 transition-colors"
+                >
+                  <ExternalLink className="w-3 h-3" />
+                  OLLAMA.COM/DOWNLOAD
+                </a>
+              </div>
+            )}
           </div>
         )}
 

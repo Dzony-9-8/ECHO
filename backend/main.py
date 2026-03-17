@@ -5521,6 +5521,60 @@ async def get_system_models():
     }
 
 
+@app.post("/api/system/install-ollama")
+async def install_ollama():
+    """Run the bundled OllamaSetup.exe if present, otherwise open the download page."""
+    import subprocess, sys, webbrowser
+    OLLAMA_URL = "https://ollama.com/download/windows"
+
+    # Look for OllamaSetup.exe next to this executable (portable build)
+    # or next to main.py (dev mode)
+    candidates = []
+    if getattr(sys, "frozen", False):
+        # Running as PyInstaller exe — check same directory as the exe
+        candidates.append(Path(sys.executable).parent / "OllamaSetup.exe")
+    # Dev mode — check project root
+    candidates.append(Path(__file__).parent.parent / "build_output" / "OllamaSetup.exe")
+    candidates.append(Path(__file__).parent / "OllamaSetup.exe")
+
+    installer = next((p for p in candidates if p.exists()), None)
+
+    if installer:
+        try:
+            subprocess.Popen(
+                [str(installer)],
+                creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == "win32" else 0,
+            )
+            return {"status": "ok", "method": "bundled", "path": str(installer)}
+        except Exception as e:
+            # Fall through to browser
+            pass
+
+    # No installer found — open browser download page
+    try:
+        webbrowser.open(OLLAMA_URL)
+        return {"status": "ok", "method": "browser", "url": OLLAMA_URL}
+    except Exception as e:
+        return {"status": "error", "message": str(e), "url": OLLAMA_URL}
+
+
+@app.get("/api/system/ollama-installer")
+async def check_ollama_installer():
+    """Check if a bundled OllamaSetup.exe is present."""
+    import sys
+    candidates = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).parent / "OllamaSetup.exe")
+    candidates.append(Path(__file__).parent.parent / "build_output" / "OllamaSetup.exe")
+    candidates.append(Path(__file__).parent / "OllamaSetup.exe")
+    found = next((p for p in candidates if p.exists()), None)
+    return {
+        "bundled": found is not None,
+        "path": str(found) if found else None,
+        "download_url": "https://ollama.com/download/windows",
+    }
+
+
 @app.post("/api/system/install")
 async def install_models(req: InstallRequest):
     """Open a terminal window to run ollama pull commands."""
