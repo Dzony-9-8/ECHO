@@ -11,6 +11,11 @@ const AnalyticsDashboard = lazy(() => import("@/components/AnalyticsDashboard"))
 const PromptLibraryPanel = lazy(() => import("@/components/PromptLibraryPanel"));
 const RAGPanel = lazy(() => import("@/components/RAGPanel"));
 const AgentSkillsPanel = lazy(() => import("@/components/AgentSkillsPanel"));
+const WorkflowBuilder = lazy(() => import("@/components/WorkflowBuilder"));
+const ToolsPanel = lazy(() => import("@/components/ToolsPanel"));
+const PluginManager = lazy(() => import("@/components/PluginManager"));
+const AutonomousMode = lazy(() => import("@/components/AutonomousMode"));
+const ProjectMode = lazy(() => import("@/components/ProjectMode"));
 
 const LazyFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -24,6 +29,7 @@ const Index = () => {
   const viewLabels: Record<ViewType, string> = {
     chat: "Chat Interface",
     workflow: "Agent Workflow",
+    builder: "Workflow Builder",
     memory: "Memory Inspector",
     telemetry: "System Telemetry",
     research: "Research & RAG",
@@ -31,6 +37,10 @@ const Index = () => {
     prompts: "Prompt Library",
     rag: "Knowledge Base",
     skills: "Agent Skills",
+    tools: "Tool Execution",
+    plugins: "Plugin Manager",
+    autonomous: "Autonomous Mode",
+    project: "Project Mode",
   };
 
   const handlePromptSelect = (prompt: string) => {
@@ -46,6 +56,7 @@ const Index = () => {
         {activeView === "chat" && <ChatView />}
         <Suspense fallback={<LazyFallback />}>
           {activeView === "workflow" && <WorkflowView />}
+          {activeView === "builder" && <WorkflowBuilder />}
           {activeView === "memory" && <MemoryView />}
           {activeView === "telemetry" && <TelemetryView />}
           {activeView === "research" && <ResearchView />}
@@ -53,6 +64,10 @@ const Index = () => {
           {activeView === "prompts" && <PromptLibraryPanel onSelect={handlePromptSelect} />}
           {activeView === "rag" && <RAGPanel />}
           {activeView === "skills" && <AgentSkillsPanel />}
+          {activeView === "tools" && <ToolsPanel />}
+          {activeView === "plugins" && <PluginManager />}
+          {activeView === "autonomous" && <AutonomousMode />}
+          {activeView === "project" && <ProjectMode />}
         </Suspense>
       </main>
     </div>

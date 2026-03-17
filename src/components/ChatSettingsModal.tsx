@@ -252,6 +252,67 @@ const ChatSettingsModal = ({ open, onClose, onChange }: Props) => {
               </div>
             </div>
 
+            {/* Pipeline Features */}
+            <div className="space-y-2">
+              <div className="text-[9px] uppercase tracking-widest text-terminal-amber font-mono border-b border-border pb-1">
+                Pipeline Features
+              </div>
+
+              {/* Task Planning toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-mono text-foreground">Task Planner</span>
+                  <p className="text-[8px] text-muted-foreground">Auto-decompose complex requests into subtasks</p>
+                </div>
+                <button
+                  onClick={() => update({ enablePlanning: !settings.enablePlanning })}
+                  className={`px-3 py-1 rounded text-[10px] font-mono border transition-colors ${
+                    settings.enablePlanning
+                      ? "border-terminal-magenta text-terminal-magenta bg-terminal-magenta/10"
+                      : "border-border text-muted-foreground"
+                  }`}
+                >
+                  {settings.enablePlanning ? "ON" : "OFF"}
+                </button>
+              </div>
+
+              {/* Self-Reflection toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-mono text-foreground">Self-Reflection</span>
+                  <p className="text-[8px] text-muted-foreground">Critic reviews responses before delivery</p>
+                </div>
+                <button
+                  onClick={() => update({ enableReflection: !settings.enableReflection })}
+                  className={`px-3 py-1 rounded text-[10px] font-mono border transition-colors ${
+                    settings.enableReflection
+                      ? "border-terminal-red text-terminal-red bg-terminal-red/10"
+                      : "border-border text-muted-foreground"
+                  }`}
+                >
+                  {settings.enableReflection ? "ON" : "OFF"}
+                </button>
+              </div>
+
+              {/* Cache Bypass toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-mono text-foreground">Bypass Cache</span>
+                  <p className="text-[8px] text-muted-foreground">Skip response cache for fresh answers</p>
+                </div>
+                <button
+                  onClick={() => update({ noCache: !settings.noCache })}
+                  className={`px-3 py-1 rounded text-[10px] font-mono border transition-colors ${
+                    settings.noCache
+                      ? "border-terminal-amber text-terminal-amber bg-terminal-amber/10"
+                      : "border-border text-muted-foreground"
+                  }`}
+                >
+                  {settings.noCache ? "ON" : "OFF"}
+                </button>
+              </div>
+            </div>
+
             {/* Scanlines toggle */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -277,7 +338,7 @@ const ChatSettingsModal = ({ open, onClose, onChange }: Props) => {
           <div className="px-4 py-3 border-t border-border flex justify-between items-center">
             <button
               onClick={() => {
-                const defaults = { temperature: 0.7, maxTokens: 2048, responseFormat: "auto" as const, systemBehavior: "balanced" };
+                const defaults: ChatSettings = { temperature: 0.7, maxTokens: 2048, responseFormat: "auto", systemBehavior: "balanced", enablePlanning: true, enableReflection: false, noCache: false };
                 setSettings(defaults);
                 saveChatSettings(defaults);
                 onChange?.(defaults);

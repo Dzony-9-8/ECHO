@@ -217,33 +217,41 @@ const sendCloudMessage = async (
 // Send via local FastAPI backend
 const sendLocalMessage = async (
   messages: ChatMessage[],
-  onChunk?: (text: string) => void
+  onChunk?: (text: string) => void,
+  model?: string
 ): Promise<string> => {
+  // Load pipeline settings from localStorage
+  let enablePlanning = true;
+  let enableReflection = false;
+  let noCache = false;
+  try {
+    const settings = JSON.parse(localStorage.getItem("echo_chat_settings") || "{}");
+    enablePlanning = settings.enablePlanning ?? true;
+    enableReflection = settings.enableReflection ?? false;
+    noCache = settings.noCache ?? false;
+  } catch { /* use defaults */ }
+
   const url = getBackendUrl();
   const response = await fetch(`${url}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      model: model || undefined,
+      enable_planning: enablePlanning,
+      enable_reflection: enableReflection,
+      no_cache: noCache,
     }),
   });
 
   if (!response.ok) throw new Error(`Backend error: ${response.status}`);
 
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
-    const reader = response.body?.getReader();
-    const decoder = new TextDecoder();
-    let fullText = "";
-    if (reader) {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value);
-        fullText += chunk;
-        onChunk?.(fullText);
-      }
+    if (onChunk) {
+      return parseSSEStream(response, onChunk);
     }
-    return fullText;
+    // No streaming callback — collect full text from SSE
+    return parseSSEStream(response, () => {});
   }
 
   const data = await response.json();
@@ -260,7 +268,7 @@ export const sendMessage = async (
   const mode = getBackendMode();
 
   if (mode === "local") {
-    return sendLocalMessage(messages, onChunk);
+    return sendLocalMessage(messages, onChunk, model);
   }
 
   return sendCloudMessage(messages, depth, onChunk, model);
@@ -298,4 +306,388 @@ export const checkHealth = async (): Promise<SystemStatus> => {
     uptime: 0,
     mode: "cloud",
   };
+};
+
+// ─── Memory API ────────────────────────────────────────────────────
+
+export interface MemoryEntry {
+  id: string;
+  type: "episodic" | "semantic" | "procedural";
+  content: string;
+  summary: string;
+  tags: string[];
+  similarity?: number;
+  timestamp?: string;
+}
+
+export const storeMemory = async (
+  type: "episodic" | "semantic" | "procedural",
+  content: string,
+  summary?: string,
+  tags?: string[]
+): Promise<{ id: string } | null> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/memory/store`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, content, summary, tags }),
+    });
+    if (!resp.ok) return null;
+    return resp.json();
+  } catch {
+    return null;
+  }
+};
+
+export const recallMemories = async (
+  query: string,
+  limit = 5,
+  type?: string
+): Promise<MemoryEntry[]> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/memory/recall`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, limit, type }),
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data.results || [];
+  } catch {
+    return [];
+  }
+};
+
+export const listMemories = async (type = "all"): Promise<MemoryEntry[]> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/memory/list?type=${type}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data.memories || [];
+  } catch {
+    return [];
+  }
+};
+
+export const deleteMemory = async (id: string): Promise<boolean> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/memory/${id}`, { method: "DELETE" });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+};
+
+// ─── Cache API ─────────────────────────────────────────────────────
+
+export const getCacheStats = async (): Promise<{
+  entries: number;
+  hits: number;
+  misses: number;
+  hit_rate: number;
+} | null> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/cache/stats`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!resp.ok) return null;
+    return resp.json();
+  } catch {
+    return null;
+  }
+};
+
+export const clearCache = async (): Promise<boolean> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/cache`, { method: "DELETE" });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+};
+
+// ─── Local Models API (Item 2) ──────────────────────────────────────
+
+export interface LocalModel {
+  name: string;
+  loaded: boolean;
+  type: string;
+  strengths: string[];
+  estimated_vram_mb: number;
+  vram_percent?: number;
+}
+
+export const fetchLocalModels = async (): Promise<LocalModel[]> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/models`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data.models || [];
+  } catch {
+    return [];
+  }
+};
+
+// ─── Telemetry API (Item 4) ─────────────────────────────────────────
+
+export interface TelemetryData {
+  uptime: number;
+  vram: { used_mb: number; total_mb: number; percent: number };
+  cache: {
+    entries: number;
+    max_size: number;
+    hits: number;
+    misses: number;
+    hit_rate: number;
+    ttl_seconds: number;
+  };
+  agents: {
+    name: string;
+    tasks: number;
+    avgTimeMs: number;
+    tokensProcessed: number;
+    status: string;
+  }[];
+  pipeline_queue: number;
+  models_loaded: string[];
+}
+
+export const fetchTelemetry = async (): Promise<TelemetryData | null> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/telemetry`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!resp.ok) return null;
+    return await resp.json();
+  } catch {
+    return null;
+  }
+};
+
+// ─── Feedback API (Item 7) ──────────────────────────────────────────
+
+export const submitFeedback = async (
+  messageId: string,
+  rating: number,
+  comment?: string
+): Promise<boolean> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message_id: messageId, rating, comment }),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+};
+
+// ─── Model Management API (Item 8) ─────────────────────────────────
+
+export const manageModel = async (
+  model: string,
+  action: "load" | "unload"
+): Promise<boolean> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/models/manage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, action }),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+};
+
+// ─── v3.2: Web Search API ────────────────────────────────────────────────────
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  scraped_text?: string;
+}
+
+export interface WebSearchResponse {
+  results: WebSearchResult[];
+  summary: string;
+  query: string;
+}
+
+export const webSearch = async (
+  query: string,
+  scrape = true,
+  maxResults = 5
+): Promise<WebSearchResponse> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/web-search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, scrape, max_results: maxResults }),
+    });
+    if (!resp.ok) throw new Error();
+    return await resp.json();
+  } catch {
+    return { results: [], summary: "Backend offline or web search unavailable.", query };
+  }
+};
+
+// ─── v3.2: Knowledge Folder Status ──────────────────────────────────────────
+
+export interface KnowledgeFileStatus {
+  file: string;
+  status: "ok" | "processing" | "error" | "empty";
+  chunks: number;
+  error: string | null;
+  ingested_at?: string;
+}
+
+export interface KnowledgeStatus {
+  folder: string;
+  watchdog_active: boolean;
+  files: KnowledgeFileStatus[];
+}
+
+export const fetchKnowledgeStatus = async (): Promise<KnowledgeStatus | null> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/knowledge/status`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!resp.ok) throw new Error();
+    return await resp.json();
+  } catch {
+    return null;
+  }
+};
+
+// ── v3.3: Deep Research ──────────────────────────────────────────────────────
+
+export interface DeepResearchLog {
+  step: string;
+  message: string;
+  level?: number;
+}
+
+export interface DeepResearchResponse {
+  query: string;
+  report: string;
+  log: DeepResearchLog[];
+  sources: string[];
+  findings_count: number;
+}
+
+export const deepResearch = async (
+  query: string,
+  depth: number = 2,
+  breadth: number = 3,
+): Promise<DeepResearchResponse | null> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/deep-research`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, depth, breadth }),
+      signal: AbortSignal.timeout(180_000), // 3 min max
+    });
+    if (!resp.ok) throw new Error(`${resp.status}`);
+    return await resp.json();
+  } catch (e) {
+    console.error("Deep research failed:", e);
+    return null;
+  }
+};
+
+// ── v3.3: Weather ────────────────────────────────────────────────────────────
+
+export interface WeatherDailyEntry {
+  date: string;
+  max: number;
+  min: number;
+  code: number;
+  precip_prob: number;
+  precip_sum?: number;
+  wind_max?: number;
+  wind_dir?: number;
+  uv_index?: number;
+  sunrise?: string;
+  sunset?: string;
+}
+
+export interface WeatherData {
+  success: boolean;
+  location?: string;
+  temperature?: number;
+  wind_speed?: number;
+  wind_dir?: number;
+  description?: string;
+  formatted?: string;
+  error?: string;
+  units?: { temp: string; wind: string };
+  feels_like?: number;
+  humidity?: number;
+  uv_index?: number;
+  sunrise?: string;
+  sunset?: string;
+  daily?: WeatherDailyEntry[];
+}
+
+export const fetchWeather = async (location: string): Promise<WeatherData | null> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/weather`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) throw new Error(`${resp.status}`);
+    return await resp.json();
+  } catch {
+    return null;
+  }
+};
+
+// ── v3.3: Code Runner ────────────────────────────────────────────────────────
+
+export interface CodeRunResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+}
+
+export const runCode = async (
+  code: string,
+  timeout: number = 8,
+): Promise<CodeRunResult | null> => {
+  const url = getBackendUrl();
+  try {
+    const resp = await fetch(`${url}/api/run-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, timeout }),
+      signal: AbortSignal.timeout((timeout + 5) * 1000),
+    });
+    if (!resp.ok) throw new Error(`${resp.status}`);
+    return await resp.json();
+  } catch {
+    return null;
+  }
 };

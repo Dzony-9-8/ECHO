@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { getAllSkills, saveSkill, updateSkill, AGENT_NAMES, type AgentSkill } from "@/lib/agentSkills";
+import { getAllSkills, saveSkill, updateSkill, detectAgentFromSkill, AGENT_NAMES, type AgentSkill } from "@/lib/agentSkills";
+import { callSkillTools } from "@/lib/skillToolsApi";
 import { Sparkles, Save, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -9,7 +10,7 @@ interface Props {
 
 const SkillCreator = ({ onSkillsChanged }: Props) => {
   const [description, setDescription] = useState("");
-  const [targetAgent, setTargetAgent] = useState("Developer");
+  const [targetAgent, setTargetAgent] = useState("auto");
   const [existingSkillId, setExistingSkillId] = useState<string | null>(null);
   const [generatedContent, setGeneratedContent] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -29,22 +30,12 @@ const SkillCreator = ({ onSkillsChanged }: Props) => {
       : undefined;
 
     try {
-      const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/skill-tools`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-          },
-          body: JSON.stringify({
-            mode: "create",
-            description: description.trim(),
-            existingSkill,
-            agent: targetAgent,
-          }),
-        }
-      );
+      const resp = await callSkillTools({
+        mode: "create",
+        description: description.trim(),
+        existingSkill,
+        agent: targetAgent,
+      });
 
       if (!resp.ok || !resp.body) {
         const err = await resp.json().catch(() => ({ error: "Failed" }));
@@ -91,14 +82,18 @@ const SkillCreator = ({ onSkillsChanged }: Props) => {
     if (!generatedContent.trim()) return;
     const nameMatch = generatedContent.match(/^#\s*(?:Skill:\s*)?(.+)/m);
     const name = nameMatch ? nameMatch[1].trim() : "Untitled Skill";
+    const assignedAgent =
+      targetAgent === "auto"
+        ? detectAgentFromSkill(name, generatedContent)
+        : targetAgent;
     saveSkill({
       name,
       content: generatedContent,
-      agent: targetAgent,
+      agent: assignedAgent,
       enabled: true,
       source: "skill-creator",
     });
-    toast.success(`Saved "${name}" to ${targetAgent}`);
+    toast.success(`Saved "${name}" to ${assignedAgent}`);
     setGeneratedContent("");
     setDescription("");
     onSkillsChanged();
@@ -122,6 +117,7 @@ const SkillCreator = ({ onSkillsChanged }: Props) => {
             onChange={(e) => setTargetAgent(e.target.value)}
             className="bg-muted border border-border rounded px-2 py-1 text-xs font-mono text-foreground focus:outline-none"
           >
+            <option value="auto">⚡ Auto-detect</option>
             {AGENT_NAMES.map((a) => (
               <option key={a} value={a}>{a}</option>
             ))}

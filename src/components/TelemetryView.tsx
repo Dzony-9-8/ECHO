@@ -1,13 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Activity,
-  Cpu,
   HardDrive,
   Clock,
   Zap,
   BarChart3,
-  TrendingUp,
+  Database,
+  AlertCircle,
 } from "lucide-react";
 import {
   AreaChart,
@@ -19,49 +19,86 @@ import {
   Bar,
   Tooltip,
 } from "recharts";
+import { getBackendMode, fetchTelemetry, type TelemetryData } from "@/lib/api";
 
-// Generate mock time-series data
-const generateData = (points: number) =>
-  Array.from({ length: points }, (_, i) => ({
-    time: `${i}s`,
-    vram: 4.2 + Math.random() * 3,
-    tokens: Math.floor(15 + Math.random() * 25),
-    latency: Math.floor(80 + Math.random() * 200),
-  }));
-
-const agentPerformance = [
-  { name: "Supervisor", tasks: 45, avgTime: 1.2, success: 98 },
-  { name: "Researcher", tasks: 32, avgTime: 4.8, success: 89 },
-  { name: "Developer", tasks: 28, avgTime: 3.2, success: 94 },
-  { name: "Critic", tasks: 40, avgTime: 2.1, success: 96 },
-];
-
-const agentBarData = agentPerformance.map((a) => ({
-  name: a.name,
-  tasks: a.tasks,
-  success: a.success,
-}));
+interface VramPoint {
+  time: string;
+  vram: number;
+}
 
 const TelemetryView = () => {
-  const [data, setData] = useState(generateData(20));
+  const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
+  const [vramHistory, setVramHistory] = useState<VramPoint[]>([]);
+  const [offline, setOffline] = useState(false);
+  const tickRef = useRef(0);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setData((prev) => {
-        const next = [...prev.slice(1)];
-        next.push({
-          time: `${parseInt(prev[prev.length - 1].time) + 1}s`,
-          vram: 4.2 + Math.random() * 3,
-          tokens: Math.floor(15 + Math.random() * 25),
-          latency: Math.floor(80 + Math.random() * 200),
+    const mode = getBackendMode();
+    if (mode !== "local") return;
+
+    const poll = async () => {
+      const data = await fetchTelemetry();
+      if (data) {
+        setTelemetry(data);
+        setOffline(false);
+        tickRef.current += 1;
+        setVramHistory((prev) => {
+          const next = [...prev, { time: `${tickRef.current * 3}s`, vram: data.vram.used_mb / 1024 }];
+          return next.length > 20 ? next.slice(-20) : next;
         });
-        return next;
-      });
-    }, 2000);
+      } else {
+        setOffline(true);
+      }
+    };
+
+    poll();
+    const interval = setInterval(poll, 3000);
     return () => clearInterval(interval);
   }, []);
 
-  const latest = data[data.length - 1];
+  const mode = getBackendMode();
+
+  if (mode !== "local") {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center space-y-2">
+          <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto" />
+          <p className="text-sm text-muted-foreground font-mono">
+            Telemetry requires Local Mode
+          </p>
+          <p className="text-[10px] text-muted-foreground/60 font-mono">
+            Switch to local backend in settings
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (offline || !telemetry) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center space-y-2">
+          <Activity className="w-8 h-8 text-muted-foreground mx-auto animate-pulse" />
+          <p className="text-sm text-muted-foreground font-mono">
+            {offline ? "Backend offline" : "Loading telemetry..."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const totalTasks = telemetry.agents.reduce((s, a) => s + a.tasks, 0);
+  const totalTokens = telemetry.agents.reduce((s, a) => s + a.tokensProcessed, 0);
+  const avgLatency = totalTasks > 0
+    ? Math.round(telemetry.agents.reduce((s, a) => s + a.avgTimeMs * a.tasks, 0) / totalTasks)
+    : 0;
+  const vramTotalGb = telemetry.vram.total_mb / 1024;
+
+  const agentBarData = telemetry.agents.map((a) => ({
+    name: a.name,
+    tasks: a.tasks,
+    tokens: Math.round(a.tokensProcessed / 1000),
+  }));
 
   return (
     <div className="flex-1 overflow-y-auto">
@@ -72,6 +109,9 @@ const TelemetryView = () => {
           <h2 className="text-xs uppercase tracking-widest text-primary font-display glow-green">
             System Telemetry
           </h2>
+          <span className="text-[9px] text-muted-foreground font-mono ml-auto">
+            uptime: {Math.floor(telemetry.uptime / 60)}m {telemetry.uptime % 60}s
+          </span>
         </div>
 
         {/* Stat cards */}
@@ -80,29 +120,29 @@ const TelemetryView = () => {
             {
               icon: HardDrive,
               label: "VRAM Usage",
-              value: `${latest.vram.toFixed(1)} GB`,
-              sub: "/ 11 GB",
-              color: "text-terminal-amber",
+              value: `${(telemetry.vram.used_mb / 1024).toFixed(1)} GB`,
+              sub: `/ ${vramTotalGb.toFixed(0)} GB (${telemetry.vram.percent}%)`,
+              color: telemetry.vram.percent > 85 ? "text-terminal-red" : "text-terminal-amber",
             },
             {
               icon: Zap,
-              label: "Tokens/sec",
-              value: `${latest.tokens}`,
-              sub: "avg throughput",
+              label: "Total Tokens",
+              value: totalTokens > 1000 ? `${(totalTokens / 1000).toFixed(1)}k` : `${totalTokens}`,
+              sub: "processed this session",
               color: "text-primary",
             },
             {
               icon: Clock,
-              label: "Latency",
-              value: `${latest.latency} ms`,
-              sub: "last request",
+              label: "Avg Latency",
+              value: avgLatency > 1000 ? `${(avgLatency / 1000).toFixed(1)}s` : `${avgLatency}ms`,
+              sub: "per agent task",
               color: "text-terminal-cyan",
             },
             {
-              icon: BarChart3,
-              label: "Tasks Completed",
-              value: "145",
-              sub: "this session",
+              icon: Database,
+              label: "Cache",
+              value: `${telemetry.cache.hit_rate}%`,
+              sub: `${telemetry.cache.hits} hits / ${telemetry.cache.entries} entries`,
               color: "text-terminal-magenta",
             },
           ].map((stat) => (
@@ -132,10 +172,10 @@ const TelemetryView = () => {
           {/* VRAM chart */}
           <div className="p-4 rounded border border-border bg-card">
             <div className="text-[10px] uppercase tracking-widest text-terminal-amber mb-3 font-display">
-              GPU VRAM (GB) — Real-time
+              GPU VRAM (GB) - Real-time
             </div>
             <ResponsiveContainer width="100%" height={180}>
-              <AreaChart data={data}>
+              <AreaChart data={vramHistory}>
                 <defs>
                   <linearGradient id="vramGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#d4a44a" stopOpacity={0.3} />
@@ -149,7 +189,7 @@ const TelemetryView = () => {
                   tickLine={false}
                 />
                 <YAxis
-                  domain={[0, 11]}
+                  domain={[0, Math.ceil(vramTotalGb)]}
                   tick={{ fontSize: 9, fill: "#666" }}
                   axisLine={false}
                   tickLine={false}
@@ -165,44 +205,7 @@ const TelemetryView = () => {
             </ResponsiveContainer>
           </div>
 
-          {/* Token/sec chart */}
-          <div className="p-4 rounded border border-border bg-card">
-            <div className="text-[10px] uppercase tracking-widest text-primary mb-3 font-display">
-              Tokens/sec — Real-time
-            </div>
-            <ResponsiveContainer width="100%" height={180}>
-              <AreaChart data={data}>
-                <defs>
-                  <linearGradient id="tokenGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#4ade80" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#4ade80" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <XAxis
-                  dataKey="time"
-                  tick={{ fontSize: 9, fill: "#666" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 9, fill: "#666" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="tokens"
-                  stroke="#4ade80"
-                  fill="url(#tokenGrad)"
-                  strokeWidth={1.5}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        {/* Agent performance */}
-        <div className="grid grid-cols-2 gap-4">
+          {/* Agent task bar chart */}
           <div className="p-4 rounded border border-border bg-card">
             <div className="text-[10px] uppercase tracking-widest text-terminal-cyan mb-3 font-display">
               Agent Task Distribution
@@ -233,8 +236,10 @@ const TelemetryView = () => {
               </BarChart>
             </ResponsiveContainer>
           </div>
+        </div>
 
-          {/* Agent stats table */}
+        {/* Agent performance table + models loaded */}
+        <div className="grid grid-cols-2 gap-4">
           <div className="p-4 rounded border border-border bg-card">
             <div className="text-[10px] uppercase tracking-widest text-terminal-magenta mb-3 font-display">
               Agent Performance Metrics
@@ -245,36 +250,66 @@ const TelemetryView = () => {
                   <th className="text-left py-1.5">Agent</th>
                   <th className="text-right py-1.5">Tasks</th>
                   <th className="text-right py-1.5">Avg Time</th>
-                  <th className="text-right py-1.5">Success</th>
+                  <th className="text-right py-1.5">Tokens</th>
+                  <th className="text-right py-1.5">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {agentPerformance.map((a) => (
+                {telemetry.agents.map((a) => (
                   <tr key={a.name} className="border-b border-border/50">
                     <td className="py-2 text-foreground">{a.name}</td>
-                    <td className="py-2 text-right text-terminal-cyan">
-                      {a.tasks}
-                    </td>
+                    <td className="py-2 text-right text-terminal-cyan">{a.tasks}</td>
                     <td className="py-2 text-right text-terminal-amber">
-                      {a.avgTime}s
+                      {a.avgTimeMs > 1000 ? `${(a.avgTimeMs / 1000).toFixed(1)}s` : `${a.avgTimeMs}ms`}
+                    </td>
+                    <td className="py-2 text-right text-foreground">
+                      {a.tokensProcessed > 1000 ? `${(a.tokensProcessed / 1000).toFixed(1)}k` : a.tokensProcessed}
                     </td>
                     <td className="py-2 text-right">
-                      <span
-                        className={
-                          a.success >= 95
-                            ? "text-primary"
-                            : a.success >= 90
-                            ? "text-terminal-amber"
-                            : "text-terminal-red"
-                        }
-                      >
-                        {a.success}%
-                      </span>
+                      <span className={`inline-block w-1.5 h-1.5 rounded-full ${
+                        a.status === "active" ? "bg-primary animate-pulse" : "bg-muted-foreground/30"
+                      }`} />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* Models loaded */}
+          <div className="p-4 rounded border border-border bg-card">
+            <div className="text-[10px] uppercase tracking-widest text-primary mb-3 font-display">
+              <BarChart3 className="w-3.5 h-3.5 inline mr-1" />
+              Loaded Models ({telemetry.models_loaded.length})
+            </div>
+            <div className="space-y-2">
+              {telemetry.models_loaded.map((m) => (
+                <div
+                  key={m}
+                  className="flex items-center gap-2 px-2 py-1.5 rounded border border-border/50 bg-muted/20"
+                >
+                  <div className="w-1.5 h-1.5 rounded-full bg-primary" />
+                  <span className="text-[11px] font-mono text-foreground flex-1 truncate">
+                    {m}
+                  </span>
+                </div>
+              ))}
+              {telemetry.models_loaded.length === 0 && (
+                <p className="text-[10px] text-muted-foreground font-mono">
+                  No models loaded
+                </p>
+              )}
+            </div>
+
+            {/* Pipeline queue */}
+            <div className="mt-4 pt-3 border-t border-border">
+              <div className="flex items-center justify-between text-[10px] font-mono">
+                <span className="text-muted-foreground uppercase tracking-wider">Pipeline Queue</span>
+                <span className={telemetry.pipeline_queue > 0 ? "text-terminal-amber" : "text-muted-foreground"}>
+                  {telemetry.pipeline_queue} active
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </div>

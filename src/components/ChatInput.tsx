@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Mic, MicOff, Paperclip, X, Image, FileText, Layers } from "lucide-react";
+import { Send, Mic, MicOff, Paperclip, X, FileText, Layers } from "lucide-react";
 import {
   type FileAttachment,
   getFileType,
@@ -7,6 +7,7 @@ import {
   formatFileSize,
   isAcceptedFile,
   ACCEPT_STRING,
+  getFileIcon,
 } from "@/lib/files";
 import ModelSelector, { getSelectedModel } from "./ModelSelector";
 import PromptTemplates from "./PromptTemplates";
@@ -223,12 +224,14 @@ const ChatInput = ({ onSend, disabled }: Props) => {
       {isDragging && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/80 border-2 border-dashed border-primary rounded pointer-events-none">
           <div className="text-center">
-            <div className="flex items-center gap-3 mb-1">
-              <Image className="w-5 h-5 text-terminal-magenta" />
-              <FileText className="w-5 h-5 text-terminal-cyan" />
+            <div className="flex items-center gap-2 mb-1 text-2xl">
+              <span>📎</span>
+              <span>💻</span>
+              <span>📄</span>
+              <span>📦</span>
             </div>
             <p className="text-xs font-mono text-primary glow-green">
-              Drop images or documents here
+              Drop any file here
             </p>
           </div>
         </div>
@@ -249,8 +252,8 @@ const ChatInput = ({ onSend, disabled }: Props) => {
                 <img src={file.preview} alt={file.name} className="w-16 h-16 object-cover rounded" />
               ) : (
                 <div className="w-16 h-16 flex flex-col items-center justify-center gap-1">
-                  <FileText className="w-5 h-5 text-terminal-cyan" />
-                  <p className="text-[8px] text-terminal-cyan font-mono">RAG</p>
+                  <span className="text-2xl leading-none">{getFileIcon(file.file)}</span>
+                  <p className="text-[8px] text-terminal-cyan font-mono uppercase">{file.name.split(".").pop()?.slice(0, 4) ?? "file"}</p>
                 </div>
               )}
               <p className="text-[8px] text-muted-foreground font-mono mt-1 truncate max-w-[64px]">{file.name}</p>
@@ -269,7 +272,7 @@ const ChatInput = ({ onSend, disabled }: Props) => {
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled}
           className="p-2.5 rounded border border-terminal-magenta bg-terminal-magenta/10 text-terminal-magenta hover:bg-terminal-magenta/20 transition-colors disabled:opacity-30"
-          title="Attach files"
+          title="Attach any file (images, code, docs, zips…)"
         >
           <Paperclip className="w-4 h-4" />
         </button>

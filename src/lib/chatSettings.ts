@@ -5,6 +5,9 @@ export interface ChatSettings {
   maxTokens: number;         // 256 - 8192
   responseFormat: "auto" | "markdown" | "plaintext" | "code";
   systemBehavior: string;    // e.g. "concise", "detailed", "technical"
+  enablePlanning: boolean;   // Task planner agent
+  enableReflection: boolean; // Self-reflection loop (Critic)
+  noCache: boolean;          // Bypass response cache
 }
 
 const STORAGE_KEY = "echo_chat_settings";
@@ -14,6 +17,9 @@ const DEFAULTS: ChatSettings = {
   maxTokens: 2048,
   responseFormat: "auto",
   systemBehavior: "balanced",
+  enablePlanning: true,
+  enableReflection: false,
+  noCache: false,
 };
 
 export const getChatSettings = (): ChatSettings => {

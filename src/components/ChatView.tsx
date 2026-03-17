@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo, useLayoutEffect } from "react";
 import ChatMessage from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
 import SystemPanel from "@/components/SystemPanel";
 import StreamingIndicator from "@/components/StreamingIndicator";
 import { type ChatMessage as ChatMessageType, sendMessage, getBackendMode } from "@/lib/api";
-import { type FileAttachment } from "@/lib/files";
+import { type FileAttachment, isTextFile, readFileText, formatFileSize } from "@/lib/files";
 import { useConversations } from "@/hooks/useConversations";
 import { useUsageAnalytics } from "@/hooks/useUsageAnalytics";
 import ConversationList from "@/components/ConversationList";
@@ -24,7 +24,7 @@ const WELCOME_MSG: ChatMessageType = {
   id: "welcome",
   role: "assistant",
   content:
-    "**ECHO System initialized.**\n\nMulti-model orchestration ready. Agents standing by.\n\n```\nSupervisor .. LLaMA 3.1\nResearcher .. DeepSeek R1\nDeveloper ... DeepSeek Coder V2\nCritic ...... DeepSeek R1\n```\n\nHow can ECHO help you today?",
+    "**ECHO System v3.1 initialized.**\n\nMulti-agent pipeline with parallel execution ready.\n\n```\nPlanner ..... LLaMA 3.1    [Task Decomposition]\nSupervisor .. LLaMA 3.1    [Coordination]\nResearcher .. LLaMA 3.1    [Analysis]\nDeveloper ... DeepSeek Coder [Code]\nCritic ...... LLaMA 3.1    [Depth-Adaptive]\n```\n\nv3.1: Faster response · Real telemetry · Feedback loop · Model management · Timeline view\n\nHow can ECHO help you today?",
   timestamp: new Date(),
   agent: "System",
 };
@@ -45,9 +45,11 @@ const ChatView = () => {
   );
   const [activeConvSystemPrompt, setActiveConvSystemPrompt] = useState("");
   const [activeAgents, setActiveAgents] = useState<Set<string>>(
-    new Set(["Supervisor", "Developer", "Researcher", "Critic"])
+    new Set(["Planner", "Supervisor", "Developer", "Researcher", "Critic"])
   );
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number | null>(null);
+  const pendingChunkRef = useRef<string>("");
 
   const {
     conversations,
@@ -103,11 +105,11 @@ const ChatView = () => {
     setShowMobileHistory(false);
   }, [setActiveConversationId]);
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  useLayoutEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
   }, [messages]);
 
-  // Check for pending prompt from prompt library
+  // Check for pending prompt from prompt library (mount only)
   useEffect(() => {
     const pending = sessionStorage.getItem("echo_pending_prompt");
     if (pending) {
@@ -120,7 +122,7 @@ const ChatView = () => {
         textarea.focus();
       }
     }
-  });
+  }, []);
 
   // Save system prompt
   useEffect(() => {
@@ -227,10 +229,30 @@ const ChatView = () => {
       preview: f.preview,
     }));
 
+    // Read text file content to append to the message sent to the backend
+    let fileContentText = "";
+    if (attachments && attachments.length > 0) {
+      for (const fa of attachments) {
+        if (isTextFile(fa.file) && fa.file.size < 2 * 1024 * 1024) {
+          try {
+            const text = await readFileText(fa.file);
+            fileContentText += `\n\n[Attached file: ${fa.name}]\n\`\`\`\n${text.slice(0, 10000)}\n\`\`\``;
+          } catch {
+            fileContentText += `\n[Attached file: ${fa.name} (${formatFileSize(fa.size)}) — could not read content]`;
+          }
+        } else {
+          fileContentText += `\n[Attached file: ${fa.name} (${formatFileSize(fa.size)}, binary/non-text)]`;
+        }
+      }
+    }
+
+    const displayContent = content || (attachments ? `[Attached ${attachments.length} file(s)]` : "");
+    const backendContent = displayContent + fileContentText;
+
     const userMsg: ChatMessageType = {
       id: crypto.randomUUID(),
       role: "user",
-      content: content || (attachments ? `[Attached ${attachments.length} file(s)]` : ""),
+      content: displayContent,
       timestamp: new Date(),
       status: "complete",
       files: filesMeta,
@@ -253,6 +275,7 @@ const ChatView = () => {
     const skillsPrompt = buildSkillsPrompt(agentName);
     const fullSystemPrompt = (effectivePrompt + skillsPrompt).trim();
 
+    // allBefore for display uses the clean displayContent
     let allBefore = [...prevMessages, userMsg];
     if (fullSystemPrompt) {
       const sysMsg: ChatMessageType = {
@@ -263,6 +286,11 @@ const ChatView = () => {
       };
       allBefore = [sysMsg, ...allBefore.filter(m => m.id !== "system-prompt")];
     }
+
+    // allForBackend swaps last user message content to include file text
+    const allForBackend = allBefore.map((m) =>
+      m.id === userMsg.id ? { ...m, content: backendContent } : m
+    );
 
     setMessages([...allBefore.filter(m => m.id !== "system-prompt"), assistantMsg]);
     setIsStreaming(true);
@@ -279,11 +307,19 @@ const ChatView = () => {
 
     try {
       const response = await sendMessage(
-        allBefore,
+        allForBackend,
         (chunk) => {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === assistantMsg.id ? { ...m, content: chunk } : m))
-          );
+          // RAF debounce: only re-render once per animation frame, not per SSE chunk
+          pendingChunkRef.current = chunk;
+          if (!rafRef.current) {
+            rafRef.current = requestAnimationFrame(() => {
+              const latest = pendingChunkRef.current;
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantMsg.id ? { ...m, content: latest } : m))
+              );
+              rafRef.current = null;
+            });
+          }
         },
         depth ?? 1,
         model
@@ -354,6 +390,7 @@ const ChatView = () => {
   });
 
   const agentColors: Record<string, string> = {
+    Planner: "border-terminal-magenta text-terminal-magenta",
     Supervisor: "border-terminal-amber text-terminal-amber",
     Developer: "border-terminal-cyan text-terminal-cyan",
     Researcher: "border-primary text-primary",

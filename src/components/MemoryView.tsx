@@ -1,97 +1,97 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Brain, Search, Database, Clock, Tag, ChevronRight, Trash2 } from "lucide-react";
-
-interface MemoryEntry {
-  id: string;
-  type: "conversation" | "document" | "knowledge";
-  content: string;
-  summary: string;
-  tags: string[];
-  similarity?: number;
-  timestamp: Date;
-  source: string;
-}
-
-// Mock data — in production, fetched from /api/memory
-const mockMemories: MemoryEntry[] = [
-  {
-    id: "1",
-    type: "conversation",
-    content: "User asked about implementing a web scraper in Python using BeautifulSoup and requests. The system provided a working solution with error handling and rate limiting.",
-    summary: "Python web scraper with BeautifulSoup",
-    tags: ["python", "scraping", "beautifulsoup"],
-    similarity: 0.95,
-    timestamp: new Date(Date.now() - 3600000),
-    source: "Chat Session #42",
-  },
-  {
-    id: "2",
-    type: "knowledge",
-    content: "DeepSeek R1 performs best with structured chain-of-thought prompts. Avoid ambiguous instructions. Temperature 0.3 optimal for reasoning tasks.",
-    summary: "DeepSeek R1 optimization notes",
-    tags: ["deepseek", "optimization", "prompting"],
-    similarity: 0.87,
-    timestamp: new Date(Date.now() - 86400000),
-    source: "System Analysis",
-  },
-  {
-    id: "3",
-    type: "document",
-    content: "FastAPI performance optimization guide: Use async endpoints, connection pooling with databases, response streaming for large payloads, and proper middleware ordering.",
-    summary: "FastAPI performance guide",
-    tags: ["fastapi", "performance", "async"],
-    similarity: 0.82,
-    timestamp: new Date(Date.now() - 172800000),
-    source: "Uploaded: fastapi_guide.pdf",
-  },
-  {
-    id: "4",
-    type: "conversation",
-    content: "Discussed CUDA memory management for running multiple models. Solution: Use model offloading with llama.cpp, load models on-demand, and implement a FIFO cache.",
-    summary: "CUDA memory management for multi-model",
-    tags: ["cuda", "gpu", "memory", "llama.cpp"],
-    similarity: 0.78,
-    timestamp: new Date(Date.now() - 259200000),
-    source: "Chat Session #38",
-  },
-  {
-    id: "5",
-    type: "knowledge",
-    content: "CriticAgent hallucination detection: Check for unsupported claims, verify code syntax, cross-reference with memory. Confidence threshold: 0.7.",
-    summary: "Critic hallucination detection patterns",
-    tags: ["critic", "hallucination", "validation"],
-    similarity: 0.71,
-    timestamp: new Date(Date.now() - 345600000),
-    source: "Self-Improvement Loop",
-  },
-];
+import { Brain, Search, Database, Clock, Tag, ChevronRight, Trash2, Plus, RefreshCw, Zap } from "lucide-react";
+import { listMemories, recallMemories, storeMemory, deleteMemory, type MemoryEntry, getBackendMode } from "@/lib/api";
+import { toast } from "sonner";
 
 const typeColors: Record<string, string> = {
-  conversation: "text-primary border-primary",
-  document: "text-terminal-cyan border-terminal-cyan",
-  knowledge: "text-terminal-amber border-terminal-amber",
+  episodic: "text-primary border-primary",
+  semantic: "text-terminal-cyan border-terminal-cyan",
+  procedural: "text-terminal-amber border-terminal-amber",
 };
 
 const typeIcons: Record<string, typeof Brain> = {
-  conversation: Clock,
-  document: Database,
-  knowledge: Brain,
+  episodic: Clock,
+  semantic: Database,
+  procedural: Zap,
+};
+
+const typeLabels: Record<string, string> = {
+  episodic: "Past Conversations",
+  semantic: "Learned Facts",
+  procedural: "Strategies",
 };
 
 const MemoryView = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedType, setSelectedType] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<MemoryEntry | null>(null);
+  const [memories, setMemories] = useState<MemoryEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newMemory, setNewMemory] = useState({ type: "semantic" as const, content: "", tags: "" });
+  const isLocal = getBackendMode() === "local";
 
-  const filtered = mockMemories.filter((m) => {
-    const matchesSearch =
-      !searchQuery ||
-      m.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.tags.some((t) => t.includes(searchQuery.toLowerCase()));
-    const matchesType = !selectedType || m.type === selectedType;
-    return matchesSearch && matchesType;
-  });
+  const loadMemories = useCallback(async () => {
+    if (!isLocal) return;
+    setLoading(true);
+    try {
+      if (searchQuery.trim()) {
+        const results = await recallMemories(searchQuery, 20, selectedType || undefined);
+        setMemories(results);
+      } else {
+        const all = await listMemories(selectedType || "all");
+        setMemories(all);
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setLoading(false);
+    }
+  }, [searchQuery, selectedType, isLocal]);
+
+  useEffect(() => {
+    loadMemories();
+  }, [loadMemories]);
+
+  const handleDelete = async (id: string) => {
+    const ok = await deleteMemory(id);
+    if (ok) {
+      setMemories((prev) => prev.filter((m) => m.id !== id));
+      if (selectedEntry?.id === id) setSelectedEntry(null);
+      toast.success("Memory deleted");
+    } else {
+      toast.error("Failed to delete memory");
+    }
+  };
+
+  const handleAdd = async () => {
+    if (!newMemory.content.trim()) return;
+    const tags = newMemory.tags.split(",").map((t) => t.trim()).filter(Boolean);
+    const result = await storeMemory(newMemory.type as any, newMemory.content, undefined, tags);
+    if (result) {
+      toast.success(`${newMemory.type} memory stored`);
+      setNewMemory({ type: "semantic", content: "", tags: "" });
+      setShowAddForm(false);
+      loadMemories();
+    } else {
+      toast.error("Failed to store memory");
+    }
+  };
+
+  const filtered = memories;
+
+  if (!isLocal) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center text-muted-foreground p-8">
+          <Brain className="w-12 h-12 mx-auto mb-4 opacity-30" />
+          <p className="text-sm font-mono mb-2">Agent Memory requires Local Mode</p>
+          <p className="text-[10px] font-mono">Switch to local backend to access memories</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex overflow-hidden">
@@ -107,16 +107,58 @@ const MemoryView = () => {
               placeholder="Semantic search across memory..."
               className="flex-1 bg-input border border-border rounded px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary font-mono"
             />
+            <button onClick={loadMemories} className="text-muted-foreground hover:text-foreground" title="Refresh">
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            </button>
+            <button onClick={() => setShowAddForm(!showAddForm)} className="text-muted-foreground hover:text-primary" title="Add memory">
+              <Plus className="w-4 h-4" />
+            </button>
           </div>
+
+          {/* Add form */}
+          {showAddForm && (
+            <div className="p-2 rounded border border-border bg-muted/30 space-y-2">
+              <div className="flex gap-2">
+                {(["episodic", "semantic", "procedural"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setNewMemory({ ...newMemory, type: t })}
+                    className={`text-[9px] font-mono px-2 py-0.5 rounded border ${
+                      newMemory.type === t ? typeColors[t] + " bg-current/10" : "border-border text-muted-foreground"
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={newMemory.content}
+                onChange={(e) => setNewMemory({ ...newMemory, content: e.target.value })}
+                placeholder="Memory content..."
+                className="w-full bg-input border border-border rounded px-2 py-1 text-xs text-foreground font-mono resize-none h-16 focus:outline-none focus:border-primary"
+              />
+              <input
+                value={newMemory.tags}
+                onChange={(e) => setNewMemory({ ...newMemory, tags: e.target.value })}
+                placeholder="Tags (comma separated)"
+                className="w-full bg-input border border-border rounded px-2 py-1 text-xs text-foreground font-mono focus:outline-none focus:border-primary"
+              />
+              <button
+                onClick={handleAdd}
+                className="w-full py-1 rounded border border-primary bg-primary/10 text-primary text-[10px] font-mono uppercase"
+              >
+                Store Memory
+              </button>
+            </div>
+          )}
+
           <div className="flex gap-2">
-            {["conversation", "document", "knowledge"].map((type) => {
+            {(["episodic", "semantic", "procedural"] as const).map((type) => {
               const Icon = typeIcons[type];
               return (
                 <button
                   key={type}
-                  onClick={() =>
-                    setSelectedType(selectedType === type ? null : type)
-                  }
+                  onClick={() => setSelectedType(selectedType === type ? null : type)}
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-mono uppercase tracking-widest border transition-all ${
                     selectedType === type
                       ? typeColors[type] + " bg-current/10"
@@ -137,67 +179,82 @@ const MemoryView = () => {
 
         {/* Entries */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {filtered.map((entry, i) => {
-            const Icon = typeIcons[entry.type];
-            return (
-              <motion.div
-                key={entry.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                onClick={() => setSelectedEntry(entry)}
-                className={`p-3 rounded border cursor-pointer transition-all ${
-                  selectedEntry?.id === entry.id
-                    ? "border-primary bg-muted"
-                    : "border-border bg-card hover:border-muted-foreground"
-                }`}
-              >
-                <div className="flex items-start gap-2">
-                  <Icon
-                    className={`w-4 h-4 flex-shrink-0 mt-0.5 ${
-                      typeColors[entry.type].split(" ")[0]
-                    }`}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-mono text-foreground">
-                      {entry.summary}
+          {loading && filtered.length === 0 ? (
+            <div className="text-center text-muted-foreground py-8">
+              <RefreshCw className="w-6 h-6 mx-auto mb-2 animate-spin opacity-30" />
+              <p className="text-[11px] font-mono">Loading memories...</p>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center text-muted-foreground py-8">
+              <Brain className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-[11px] font-mono">No memories yet</p>
+              <p className="text-[9px] font-mono mt-1">Memories are auto-extracted from conversations</p>
+            </div>
+          ) : (
+            filtered.map((entry, i) => {
+              const Icon = typeIcons[entry.type] || Brain;
+              const colors = typeColors[entry.type] || "text-muted-foreground border-border";
+              return (
+                <motion.div
+                  key={entry.id}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.03 }}
+                  onClick={() => setSelectedEntry(entry)}
+                  className={`p-3 rounded border cursor-pointer transition-all ${
+                    selectedEntry?.id === entry.id
+                      ? "border-primary bg-muted"
+                      : "border-border bg-card hover:border-muted-foreground"
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${colors.split(" ")[0]}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-mono text-foreground line-clamp-2">
+                        {entry.summary || entry.content?.slice(0, 100)}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        {typeLabels[entry.type] || entry.type}
+                        {entry.timestamp ? ` • ${new Date(entry.timestamp).toLocaleDateString()}` : ""}
+                      </div>
+                      {entry.tags && entry.tags.length > 0 && entry.tags[0] !== "" && (
+                        <div className="flex gap-1 mt-1.5 flex-wrap">
+                          {entry.tags.slice(0, 4).map((tag) => (
+                            <span
+                              key={tag}
+                              className="text-[9px] px-1.5 py-0.5 rounded bg-muted border border-border text-muted-foreground font-mono"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                    <div className="text-[10px] text-muted-foreground mt-1">
-                      {entry.source} •{" "}
-                      {entry.timestamp.toLocaleDateString()}
-                    </div>
-                    <div className="flex gap-1 mt-1.5 flex-wrap">
-                      {entry.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="text-[9px] px-1.5 py-0.5 rounded bg-muted border border-border text-muted-foreground font-mono"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
+                    {entry.similarity !== undefined && entry.similarity > 0 && (
+                      <div className="text-[10px] font-mono text-primary flex-shrink-0">
+                        {(entry.similarity * 100).toFixed(0)}%
+                      </div>
+                    )}
                   </div>
-                  {entry.similarity && (
-                    <div className="text-[10px] font-mono text-primary flex-shrink-0">
-                      {(entry.similarity * 100).toFixed(0)}%
-                    </div>
-                  )}
-                </div>
-              </motion.div>
-            );
-          })}
+                </motion.div>
+              );
+            })
+          )}
         </div>
       </div>
 
       {/* Detail panel */}
-      <div className="w-80 border-l border-border bg-sidebar flex flex-col">
+      <div className="w-80 border-l border-border bg-sidebar flex flex-col hidden lg:flex">
         {selectedEntry ? (
           <>
             <div className="p-3 border-b border-border flex items-center justify-between">
               <span className="text-[10px] uppercase tracking-widest text-primary font-display">
                 Memory Detail
               </span>
-              <button className="text-muted-foreground hover:text-terminal-red transition-colors">
+              <button
+                onClick={() => handleDelete(selectedEntry.id)}
+                className="text-muted-foreground hover:text-terminal-red transition-colors"
+              >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -206,12 +263,8 @@ const MemoryView = () => {
                 <label className="text-[9px] uppercase tracking-widest text-muted-foreground block mb-1">
                   Type
                 </label>
-                <span
-                  className={`text-xs font-mono ${
-                    typeColors[selectedEntry.type].split(" ")[0]
-                  }`}
-                >
-                  {selectedEntry.type}
+                <span className={`text-xs font-mono ${(typeColors[selectedEntry.type] || "").split(" ")[0]}`}>
+                  {typeLabels[selectedEntry.type] || selectedEntry.type}
                 </span>
               </div>
               <div>
@@ -230,31 +283,25 @@ const MemoryView = () => {
                   {selectedEntry.content}
                 </p>
               </div>
-              <div>
-                <label className="text-[9px] uppercase tracking-widest text-muted-foreground block mb-1">
-                  Tags
-                </label>
-                <div className="flex gap-1 flex-wrap">
-                  {selectedEntry.tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="text-[10px] px-2 py-0.5 rounded bg-primary/10 border border-primary/30 text-primary font-mono"
-                    >
-                      <Tag className="w-2.5 h-2.5 inline mr-1" />
-                      {tag}
-                    </span>
-                  ))}
+              {selectedEntry.tags && selectedEntry.tags.length > 0 && selectedEntry.tags[0] !== "" && (
+                <div>
+                  <label className="text-[9px] uppercase tracking-widest text-muted-foreground block mb-1">
+                    Tags
+                  </label>
+                  <div className="flex gap-1 flex-wrap">
+                    {selectedEntry.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="text-[10px] px-2 py-0.5 rounded bg-primary/10 border border-primary/30 text-primary font-mono"
+                      >
+                        <Tag className="w-2.5 h-2.5 inline mr-1" />
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="text-[9px] uppercase tracking-widest text-muted-foreground block mb-1">
-                  Source
-                </label>
-                <span className="text-xs font-mono text-foreground">
-                  {selectedEntry.source}
-                </span>
-              </div>
-              {selectedEntry.similarity && (
+              )}
+              {selectedEntry.similarity !== undefined && selectedEntry.similarity > 0 && (
                 <div>
                   <label className="text-[9px] uppercase tracking-widest text-muted-foreground block mb-1">
                     Similarity Score
@@ -279,6 +326,9 @@ const MemoryView = () => {
             <div className="text-center text-muted-foreground">
               <Brain className="w-8 h-8 mx-auto mb-2 opacity-30" />
               <p className="text-[11px] font-mono">Select a memory entry</p>
+              <p className="text-[9px] font-mono mt-1 opacity-60">
+                3 types: episodic · semantic · procedural
+              </p>
             </div>
           </div>
         )}

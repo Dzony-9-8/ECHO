@@ -71,6 +71,42 @@ export const deleteSkill = (id: string): void => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(skills));
 };
 
+// ─── Auto-assign: detect best agent from skill name/content ───────────────────
+
+const AGENT_KEYWORDS: Record<string, string[]> = {
+  Developer: [
+    "code", "function", "implement", "build", "create", "debug", "refactor",
+    "script", "program", "syntax", "api", "component", "class", "module",
+    "typescript", "javascript", "python", "html", "css", "react", "vue",
+    "node", "express", "sql", "database", "query", "endpoint", "rest",
+  ],
+  Researcher: [
+    "research", "search", "analyze", "find", "information", "data", "study",
+    "investigate", "knowledge", "web", "source", "summarize", "gather",
+    "survey", "report", "news", "article", "document",
+  ],
+  Supervisor: [
+    "plan", "task", "coordinate", "manage", "organize", "prioritize",
+    "workflow", "assign", "supervise", "pipeline", "schedule", "delegate",
+    "roadmap", "strategy", "objective",
+  ],
+  Critic: [
+    "review", "critique", "evaluate", "assess", "quality", "check",
+    "validate", "feedback", "improve", "error", "fix", "correct",
+    "test", "verify", "proofread", "rating",
+  ],
+};
+
+export const detectAgentFromSkill = (name: string, content: string): string => {
+  const text = `${name} ${content}`.toLowerCase();
+  const scores: Record<string, number> = {};
+  for (const [agent, keywords] of Object.entries(AGENT_KEYWORDS)) {
+    scores[agent] = keywords.reduce((acc, kw) => acc + (text.includes(kw) ? 1 : 0), 0);
+  }
+  const [best, bestScore] = Object.entries(scores).sort((a, b) => b[1] - a[1])[0];
+  return bestScore > 0 ? best : "Developer";
+};
+
 // Build a combined skills prompt for a given agent
 export const buildSkillsPrompt = (agent: string): string => {
   const skills = getSkillsForAgent(agent);

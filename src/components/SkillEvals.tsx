@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { getAllSkills, updateSkill, type AgentSkill, type SkillEvalCase } from "@/lib/agentSkills";
+import { callSkillTools } from "@/lib/skillToolsApi";
 import { Play, Plus, Trash2, CheckCircle, XCircle, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -40,22 +41,12 @@ const SkillEvals = ({ onSkillsChanged }: Props) => {
     if (!selectedSkill) return;
     setRunningEvalId(evalCase.id);
     try {
-      const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/skill-tools`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-          },
-          body: JSON.stringify({
-            mode: "eval",
-            skillContent: selectedSkill.content,
-            prompt: evalCase.prompt,
-            expectedBehavior: evalCase.expectedBehavior,
-          }),
-        }
-      );
+      const resp = await callSkillTools({
+        mode: "eval",
+        skillContent: selectedSkill.content,
+        prompt: evalCase.prompt,
+        expectedBehavior: evalCase.expectedBehavior,
+      });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: "Failed" }));
         toast.error(err.error || "Eval failed");

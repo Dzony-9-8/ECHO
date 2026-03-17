@@ -169,6 +169,19 @@ const SystemMetrics = () => {
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [latencyHistory, setLatencyHistory] = useState<number[]>([]);
   const latencyHistoryRef = useRef<number[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close panel when clicking outside
+  useEffect(() => {
+    if (!expanded) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setExpanded(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [expanded]);
 
   const poll = useCallback(async () => {
     const mode = getBackendMode();
@@ -246,7 +259,7 @@ const SystemMetrics = () => {
   const cpuPctDisplay = cpuUsage !== null ? Math.round(cpuUsage) : null;
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex items-center gap-3 text-[10px] font-mono text-muted-foreground hover:text-foreground transition-colors"

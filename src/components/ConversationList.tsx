@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
-import { MessageSquare, Plus, Trash2, Search, Pin, PinOff, Settings2, Calendar, GitBranch, Tag } from "lucide-react";
+import { MessageSquare, Plus, Trash2, Search, Pin, PinOff, Settings2, Calendar, GitBranch, Tag, Network } from "lucide-react";
+import ConversationTree from "@/components/ConversationTree";
 import type { Conversation } from "@/hooks/useConversations";
 import { getParentBranch, getBranchesForConversation } from "@/lib/branches";
 import {
@@ -103,14 +104,42 @@ const ConversationList = ({
     return result;
   }, [conversations, search, useRegex, dateFrom, dateTo, activeTagFilter]);
 
+  const [viewMode, setViewMode] = useState<"list" | "timeline" | "tree">("list");
+
   // Sort: pinned first, then by date
   const sorted = [...filtered].sort((a, b) => {
     const aPinned = pinnedIds.has(a.id);
     const bPinned = pinnedIds.has(b.id);
     if (aPinned && !bPinned) return -1;
     if (!aPinned && bPinned) return 1;
-    return 0;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
+
+  // Group by date for timeline view
+  const grouped = useMemo(() => {
+    if (viewMode !== "timeline") return {};
+    const groups: Record<string, typeof sorted> = {};
+    const now = new Date();
+    const today = now.toDateString();
+    const yesterday = new Date(now.getTime() - 86400000).toDateString();
+
+    for (const conv of sorted) {
+      const d = new Date(conv.created_at);
+      const ds = d.toDateString();
+      let label: string;
+      if (ds === today) label = "Today";
+      else if (ds === yesterday) label = "Yesterday";
+      else {
+        const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
+        if (diffDays < 7) label = "This Week";
+        else if (diffDays < 30) label = "This Month";
+        else label = d.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+      }
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(conv);
+    }
+    return groups;
+  }, [sorted, viewMode]);
 
   return (
     <div className="flex flex-col h-full">
@@ -122,6 +151,28 @@ const ConversationList = ({
           >
             <Plus className="w-3.5 h-3.5" />
             New Chat
+          </button>
+          <button
+            onClick={() => setViewMode(viewMode === "timeline" ? "list" : "timeline")}
+            className={`p-2 rounded border transition-colors ${
+              viewMode === "timeline"
+                ? "border-terminal-cyan text-terminal-cyan bg-terminal-cyan/10"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+            title="Timeline view"
+          >
+            <Calendar className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => setViewMode(viewMode === "tree" ? "list" : "tree")}
+            className={`p-2 rounded border transition-colors ${
+              viewMode === "tree"
+                ? "border-terminal-amber text-terminal-amber bg-terminal-amber/10"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+            title="Branch tree view"
+          >
+            <Network className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={() => setShowSystemPrompt(!showSystemPrompt)}
@@ -302,7 +353,46 @@ const ConversationList = ({
         )}
       </div>
       <div className="flex-1 overflow-y-auto py-1">
-        {sorted.map((conv) => {
+        {/* Tree mode: branch hierarchy */}
+        {viewMode === "tree" && (
+          <ConversationTree
+            conversations={conversations}
+            activeId={activeId}
+            onSelect={onSelect}
+          />
+        )}
+
+        {/* Timeline mode: grouped by date */}
+        {viewMode === "timeline" && Object.entries(grouped).map(([label, convs]) => (
+          <div key={label}>
+            <div className="px-3 py-1.5 text-[8px] uppercase tracking-widest text-terminal-cyan font-mono sticky top-0 bg-background/90 backdrop-blur-sm border-b border-border/30">
+              {label} ({convs.length})
+            </div>
+            {convs.map((conv) => {
+              const isPinned = pinnedIds.has(conv.id);
+              return (
+                <div
+                  key={conv.id}
+                  onClick={() => onSelect(conv.id)}
+                  className={`group flex items-center gap-2 px-3 py-2 cursor-pointer text-xs font-mono transition-all ${
+                    activeId === conv.id
+                      ? "text-primary bg-muted border-r-2 border-primary"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  {isPinned ? <Pin className="w-3 h-3 flex-shrink-0 text-terminal-amber" /> : <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />}
+                  <span className="flex-1 truncate">{conv.title}</span>
+                  <span className="text-[8px] text-muted-foreground/50">
+                    {new Date(conv.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+
+        {/* List mode: flat */}
+        {viewMode === "list" && sorted.map((conv) => {
           const isPinned = pinnedIds.has(conv.id);
           const parentBranch = getParentBranch(conv.id);
           const childBranches = getBranchesForConversation(conv.id);
@@ -417,7 +507,12 @@ const ConversationList = ({
             </div>
           );
         })}
-        {sorted.length === 0 && (
+        {viewMode === "list" && sorted.length === 0 && (
+          <p className="text-[10px] text-muted-foreground text-center py-4 font-mono">
+            {search || dateFrom || dateTo || activeTagFilter ? "No matches" : "No conversations yet"}
+          </p>
+        )}
+        {viewMode === "timeline" && Object.keys(grouped).length === 0 && (
           <p className="text-[10px] text-muted-foreground text-center py-4 font-mono">
             {search || dateFrom || dateTo || activeTagFilter ? "No matches" : "No conversations yet"}
           </p>

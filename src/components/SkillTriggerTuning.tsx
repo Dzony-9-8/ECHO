@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { getAllSkills, updateSkill } from "@/lib/agentSkills";
+import { callSkillTools } from "@/lib/skillToolsApi";
 import { Target, Plus, Trash2, Zap, Check } from "lucide-react";
 import { toast } from "sonner";
 
@@ -33,23 +34,13 @@ const SkillTriggerTuning = ({ onSkillsChanged }: Props) => {
     setResult(null);
 
     try {
-      const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/skill-tools`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-          },
-          body: JSON.stringify({
-            mode: "tune-trigger",
-            skillName: selectedSkill.name,
-            currentDescription: selectedSkill.triggerDescription || selectedSkill.content.slice(0, 300),
-            shouldTrigger,
-            shouldNotTrigger,
-          }),
-        }
-      );
+      const resp = await callSkillTools({
+        mode: "tune-trigger",
+        skillName: selectedSkill.name,
+        currentDescription: selectedSkill.triggerDescription || selectedSkill.content.slice(0, 300),
+        shouldTrigger,
+        shouldNotTrigger,
+      });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: "Failed" }));
         toast.error(err.error || "Analysis failed");

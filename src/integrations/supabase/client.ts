@@ -5,12 +5,43 @@ import type { Database } from './types';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
+// Dynamic storage adapter — reads the remember-me preference at access time,
+// not at client creation time. This ensures the preference set during login
+// is respected immediately, not just on the next app launch.
+const dynamicStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      const rememberMe = localStorage.getItem("echo_remember_me") === "true";
+      return (rememberMe ? localStorage : sessionStorage).getItem(key);
+    } catch {
+      return localStorage.getItem(key);
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      const rememberMe = localStorage.getItem("echo_remember_me") === "true";
+      const primary = rememberMe ? localStorage : sessionStorage;
+      const secondary = rememberMe ? sessionStorage : localStorage;
+      primary.setItem(key, value);
+      secondary.removeItem(key); // clear stale copy from the other storage
+    } catch {
+      localStorage.setItem(key, value);
+    }
+  },
+  removeItem: (key: string): void => {
+    try {
+      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    } catch { /* ignore */ }
+  },
+};
+
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
-    storage: localStorage,
+    storage: dynamicStorage,
     persistSession: true,
     autoRefreshToken: true,
   }

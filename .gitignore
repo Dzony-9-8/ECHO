@@ -22,3 +22,29 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+*.env
+venv/
+.venv/
+*.egg-info/
+build/
+
+# Backend runtime data
+backend/__pycache__/
+backend/chroma_db/
+backend/knowledge/
+backend/logs/
+
+# Build artifacts
+build_out.txt
+build_output/
+OPTIMIZATION_REPORT.pdf
+=6.0
+
+# Claude Code workspace
+.claude/

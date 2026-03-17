@@ -5,6 +5,7 @@ import {
   updateSkill,
   deleteSkill,
   parseSkillFile,
+  detectAgentFromSkill,
   AGENT_NAMES,
   type AgentSkill,
 } from "@/lib/agentSkills";
@@ -25,8 +26,10 @@ import {
   Sparkles,
   FlaskConical,
   Target,
+  FolderSearch,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getBackendMode, getBackendUrl } from "@/lib/api";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import SkillCreator from "@/components/SkillCreator";
 import SkillEvals from "@/components/SkillEvals";
@@ -47,7 +50,7 @@ const AgentSkillsPanel = () => {
   const [showNew, setShowNew] = useState(false);
   const [newName, setNewName] = useState("");
   const [newContent, setNewContent] = useState("");
-  const [newAgent, setNewAgent] = useState<string>("Developer");
+  const [newAgent, setNewAgent] = useState<string>("auto");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => setSkills(getAllSkills()), []);
@@ -57,10 +60,14 @@ const AgentSkillsPanel = () => {
       toast.error("Name and content are required");
       return;
     }
+    const assignedAgent =
+      newAgent === "auto"
+        ? detectAgentFromSkill(newName.trim(), newContent.trim())
+        : newAgent;
     saveSkill({
       name: newName.trim(),
       content: newContent.trim(),
-      agent: newAgent,
+      agent: assignedAgent,
       enabled: true,
       source: "custom",
     });
@@ -68,7 +75,7 @@ const AgentSkillsPanel = () => {
     setNewContent("");
     setShowNew(false);
     refresh();
-    toast.success(`Skill "${newName}" added to ${newAgent}`);
+    toast.success(`Skill "${newName}" added to ${assignedAgent}`);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -82,11 +89,37 @@ const AgentSkillsPanel = () => {
       }
       const text = await file.text();
       const parsed = parseSkillFile(text, file.name);
-      saveSkill({ name: parsed.name, content: parsed.content, agent: newAgent, enabled: true, source: file.name });
+      const assignedAgent =
+        newAgent === "auto"
+          ? detectAgentFromSkill(parsed.name, parsed.content)
+          : newAgent;
+      saveSkill({ name: parsed.name, content: parsed.content, agent: assignedAgent, enabled: true, source: file.name });
       count++;
     }
-    if (count > 0) { toast.success(`Imported ${count} skill file(s) → ${newAgent}`); refresh(); }
+    if (count > 0) { toast.success(`Imported ${count} skill file(s) → ${newAgent === "auto" ? "auto-assigned" : newAgent}`); refresh(); }
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleScanLocalSkills = async () => {
+    const url = getBackendUrl();
+    try {
+      const resp = await fetch(`${url}/api/skills/scan`);
+      if (!resp.ok) { toast.error("Failed to scan local skills"); return; }
+      const data = await resp.json();
+      if (!data.exists) { toast.error(`Skills directory not found: ${data.directory}`); return; }
+      if (data.skills.length === 0) { toast.info("No .md skill files found in skills/ directory"); return; }
+      let imported = 0;
+      for (const skill of data.skills) {
+        const assignedAgent =
+          newAgent === "auto"
+            ? detectAgentFromSkill(skill.name, skill.content)
+            : newAgent;
+        saveSkill({ name: skill.name, content: skill.content, agent: assignedAgent, enabled: true, source: `local:${skill.filename}` });
+        imported++;
+      }
+      toast.success(`Imported ${imported} skill(s) from local filesystem`);
+      refresh();
+    } catch { toast.error("Cannot connect to local backend"); }
   };
 
   const handleToggle = (id: string, enabled: boolean) => { updateSkill(id, { enabled: !enabled }); refresh(); };
@@ -124,6 +157,11 @@ const AgentSkillsPanel = () => {
         <TabsContent value="skills" className="flex-1 overflow-y-auto">
           <div className="p-3 space-y-2">
             <div className="flex items-center gap-1 justify-end">
+              {getBackendMode() === "local" && (
+                <button onClick={handleScanLocalSkills} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Scan local skills/ directory">
+                  <FolderSearch className="w-3.5 h-3.5" />
+                </button>
+              )}
               <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Import .md skill files">
                 <Upload className="w-3.5 h-3.5" />
               </button>
@@ -139,6 +177,7 @@ const AgentSkillsPanel = () => {
                 <div className="flex items-center gap-2">
                   <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Skill name..." className="flex-1 bg-muted border border-border rounded px-2 py-1 text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary" />
                   <select value={newAgent} onChange={(e) => setNewAgent(e.target.value)} className="bg-muted border border-border rounded px-2 py-1 text-xs font-mono text-foreground focus:outline-none focus:border-primary">
+                    <option value="auto">⚡ Auto-detect</option>
                     {AGENT_NAMES.map((a) => <option key={a} value={a}>{a}</option>)}
                     <option value="global">Global (all agents)</option>
                   </select>
@@ -203,6 +242,7 @@ const AgentSkillsPanel = () => {
               <div className="flex items-center gap-2 pt-2 border-t border-border">
                 <span className="text-[9px] font-mono text-muted-foreground">Import target:</span>
                 <select value={newAgent} onChange={(e) => setNewAgent(e.target.value)} className="bg-muted border border-border rounded px-2 py-0.5 text-[10px] font-mono text-foreground focus:outline-none">
+                  <option value="auto">⚡ Auto</option>
                   {AGENT_NAMES.map((a) => <option key={a} value={a}>{a}</option>)}
                   <option value="global">Global</option>
                 </select>

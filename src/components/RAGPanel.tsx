@@ -1,232 +1,242 @@
-import { useState } from "react";
-import { Search, Upload, Trash2, FileText, Plus, X, Brain, Zap } from "lucide-react";
-import { useDocuments, type Document } from "@/hooks/useDocuments";
+import { useState, useEffect, useRef } from "react";
+import { motion } from "framer-motion";
+import { Search, FileText, Upload, Database, CheckCircle2, AlertCircle, Loader2, RefreshCw } from "lucide-react";
+import { getBackendMode, getBackendUrl, fetchKnowledgeStatus, type KnowledgeFileStatus } from "@/lib/api";
 import { toast } from "sonner";
 
+interface SearchResult {
+  id: string;
+  title: string;
+  content: string;
+  similarity: number;
+  vector_score?: number;
+  bm25_score?: number;
+  hybrid?: boolean;
+}
+
+const statusIcon = (s: KnowledgeFileStatus) => {
+  if (s.status === "ok") return <CheckCircle2 className="w-3 h-3 text-primary" />;
+  if (s.status === "processing") return <Loader2 className="w-3 h-3 text-terminal-amber animate-spin" />;
+  if (s.status === "error") return <AlertCircle className="w-3 h-3 text-terminal-red" />;
+  return <FileText className="w-3 h-3 text-muted-foreground" />;
+};
+
 const RAGPanel = () => {
-  const { documents, loading, addDocument, removeDocument, searchDocuments, semanticSearch } = useDocuments();
-  const [search, setSearch] = useState("");
-  const [results, setResults] = useState<Document[] | null>(null);
-  const [semanticResults, setSemanticResults] = useState<{ id: string; score: number; reason: string }[] | null>(null);
-  const [showAdd, setShowAdd] = useState(false);
-  const [newTitle, setNewTitle] = useState("");
-  const [newContent, setNewContent] = useState("");
-  const [searchMode, setSearchMode] = useState<"keyword" | "semantic">("keyword");
-  const [isSearching, setIsSearching] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [knowledgeFiles, setKnowledgeFiles] = useState<KnowledgeFileStatus[]>([]);
+  const [uploadText, setUploadText] = useState("");
+  const [uploadTitle, setUploadTitle] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [hybrid, setHybrid] = useState(true);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const mode = getBackendMode();
+
+  useEffect(() => {
+    if (mode !== "local") return;
+    const poll = async () => {
+      const s = await fetchKnowledgeStatus();
+      if (s) setKnowledgeFiles(s.files);
+    };
+    poll();
+    const id = setInterval(poll, 8000); // Knowledge files rarely change; 8s is plenty
+    return () => clearInterval(id);
+  }, [mode]);
 
   const handleSearch = async () => {
-    if (!search.trim()) { setResults(null); setSemanticResults(null); return; }
-    setIsSearching(true);
-    
-    if (searchMode === "semantic") {
-      const ranked = await semanticSearch(search);
-      setSemanticResults(ranked);
-      setResults(null);
-    } else {
-      const r = await searchDocuments(search);
-      setResults(r);
-      setSemanticResults(null);
+    if (!query.trim()) return;
+    setSearching(true);
+    try {
+      const url = getBackendUrl();
+      const resp = await fetch(`${url}/api/semantic-search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: query.trim(), limit: 8, hybrid }),
+      });
+      const data = await resp.json();
+      setResults(data.results || []);
+    } catch {
+      toast.error("Search failed — is backend running?");
+    } finally {
+      setSearching(false);
     }
-    setIsSearching(false);
   };
 
-  const handleAdd = async () => {
-    if (!newTitle.trim() || !newContent.trim()) { toast.error("Title and content required"); return; }
-    await addDocument({ title: newTitle, content: newContent });
-    setNewTitle("");
-    setNewContent("");
-    setShowAdd(false);
-    toast.success("Document added to knowledge base");
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { toast.error("Max 5MB"); return; }
-
+  const handleFileRead = async (file: File) => {
     const text = await file.text();
-    await addDocument({
-      title: file.name,
-      content: text,
-      fileName: file.name,
-      fileType: file.type,
-    });
-    toast.success(`Indexed: ${file.name}`);
-    e.target.value = "";
+    setUploadTitle(file.name.replace(/\.[^.]+$/, ""));
+    setUploadText(text.slice(0, 50000));
   };
 
-  const clearSearch = () => {
-    setResults(null);
-    setSemanticResults(null);
-    setSearch("");
+  const handleIngest = async () => {
+    if (!uploadText.trim()) { toast.error("No content to ingest"); return; }
+    setUploading(true);
+    try {
+      const url = getBackendUrl();
+      const resp = await fetch(`${url}/api/documents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: uploadTitle || "Untitled", content: uploadText }),
+      });
+      if (resp.ok) {
+        toast.success("Document ingested");
+        setUploadText("");
+        setUploadTitle("");
+      } else {
+        toast.error("Ingest failed");
+      }
+    } catch {
+      toast.error("Backend offline");
+    } finally {
+      setUploading(false);
+    }
   };
-
-  // For semantic results, map back to documents
-  const semanticDocs = semanticResults
-    ? semanticResults
-        .map((r) => {
-          const doc = documents.find((d) => d.id === r.id);
-          return doc ? { ...doc, score: r.score, reason: r.reason } : null;
-        })
-        .filter(Boolean) as (Document & { score: number; reason: string })[]
-    : null;
-
-  const displayDocs = semanticDocs || (results !== null ? results : documents);
-  const hasActiveSearch = results !== null || semanticResults !== null;
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="p-3 border-b border-border space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-mono text-primary uppercase tracking-wider flex items-center gap-2">
-            <Search className="w-4 h-4" /> Knowledge Base
-          </h2>
-          <div className="flex gap-1">
-            <label className="flex items-center gap-1 px-2 py-1 rounded border border-terminal-cyan text-terminal-cyan text-[10px] font-mono hover:bg-terminal-cyan/10 transition-colors cursor-pointer">
-              <Upload className="w-3 h-3" /> Upload
-              <input type="file" accept=".txt,.md,.csv,.json,.py,.js,.ts,.html,.css" onChange={handleFileUpload} className="hidden" />
+    <div className="flex-1 flex overflow-hidden">
+      {/* Left: search + results */}
+      <div className="flex-1 flex flex-col">
+        <div className="border-b border-border bg-card p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-terminal-cyan" />
+            <span className="text-xs font-mono text-terminal-cyan uppercase tracking-wider">Knowledge Base Search</span>
+            <div className="flex-1" />
+            <label className="flex items-center gap-1.5 text-[9px] font-mono text-muted-foreground cursor-pointer">
+              <input type="checkbox" checked={hybrid} onChange={(e) => setHybrid(e.target.checked)} className="w-3 h-3 accent-primary" />
+              Hybrid BM25+Vector
             </label>
-            <button
-              onClick={() => setShowAdd(!showAdd)}
-              className="flex items-center gap-1 px-2 py-1 rounded border border-primary text-primary text-[10px] font-mono hover:bg-primary/10 transition-colors"
-            >
-              <Plus className="w-3 h-3" /> Add
-            </button>
           </div>
-        </div>
-
-        {showAdd && (
-          <div className="space-y-2 p-2 border border-border rounded bg-muted/50">
-            <input
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="Document title..."
-              className="w-full bg-input border border-border rounded px-2 py-1.5 text-[11px] font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
-            />
-            <textarea
-              value={newContent}
-              onChange={(e) => setNewContent(e.target.value)}
-              placeholder="Document content..."
-              className="w-full bg-input border border-border rounded px-2 py-1.5 text-[11px] font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary resize-none"
-              rows={5}
-            />
-            <div className="flex justify-end gap-1">
-              <button onClick={() => setShowAdd(false)} className="text-[10px] font-mono text-muted-foreground hover:text-foreground">Cancel</button>
-              <button onClick={handleAdd} className="px-2 py-1 rounded border border-primary text-primary text-[10px] font-mono hover:bg-primary/10">Save</button>
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                placeholder="Search knowledge base..."
+                className="w-full bg-input border border-border rounded pl-8 pr-3 py-1.5 text-sm font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+              />
             </div>
+            <button
+              onClick={handleSearch}
+              disabled={searching || mode !== "local"}
+              className="px-3 py-1.5 rounded border border-primary text-primary bg-primary/10 hover:bg-primary/20 text-[10px] font-mono uppercase disabled:opacity-40 flex items-center gap-1"
+            >
+              {searching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+              Search
+            </button>
           </div>
-        )}
-
-        {/* Search mode toggle */}
-        <div className="flex gap-1">
-          <button
-            onClick={() => setSearchMode("keyword")}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-mono border transition-colors ${
-              searchMode === "keyword" ? "border-primary text-primary bg-primary/10" : "border-border text-muted-foreground"
-            }`}
-          >
-            <Zap className="w-2.5 h-2.5" /> Keyword
-          </button>
-          <button
-            onClick={() => setSearchMode("semantic")}
-            className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-mono border transition-colors ${
-              searchMode === "semantic" ? "border-accent text-accent bg-accent/10" : "border-border text-muted-foreground"
-            }`}
-          >
-            <Brain className="w-2.5 h-2.5" /> AI Semantic
-          </button>
         </div>
 
-        {/* Search */}
-        <div className="flex gap-1">
-          <div className="relative flex-1">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              placeholder={searchMode === "semantic" ? "Ask a question about your documents..." : "Search documents..."}
-              className="w-full bg-input border border-border rounded pl-7 pr-2 py-1.5 text-[10px] font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
-            />
-          </div>
-          <button
-            onClick={handleSearch}
-            disabled={isSearching}
-            className={`px-2 py-1 rounded border text-[10px] font-mono transition-colors ${
-              searchMode === "semantic"
-                ? "border-accent text-accent hover:bg-accent/10"
-                : "border-primary text-primary hover:bg-primary/10"
-            } disabled:opacity-50`}
-          >
-            {isSearching ? "..." : "Search"}
-          </button>
-          {hasActiveSearch && (
-            <button onClick={clearSearch} className="p-1 rounded text-muted-foreground hover:text-foreground">
-              <X className="w-3 h-3" />
-            </button>
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          {mode !== "local" ? (
+            <p className="text-[11px] text-muted-foreground font-mono text-center py-8">Switch to Local Mode to use knowledge search.</p>
+          ) : results.length === 0 && !searching ? (
+            <p className="text-[11px] text-muted-foreground font-mono text-center py-8">Search your knowledge base above, or ingest documents on the right.</p>
+          ) : (
+            results.map((r, i) => (
+              <motion.div
+                key={r.id}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.04 }}
+                className="p-3 rounded border border-border bg-card hover:border-muted-foreground transition-all"
+              >
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <div className="flex items-center gap-1.5">
+                    <FileText className="w-3 h-3 text-terminal-cyan flex-shrink-0" />
+                    <span className="text-[11px] font-mono text-foreground font-medium">{r.title}</span>
+                  </div>
+                  <div className="flex gap-1 flex-shrink-0">
+                    <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
+                      {(r.similarity * 100).toFixed(0)}%
+                    </span>
+                    {r.hybrid && (
+                      <span className="text-[8px] font-mono px-1 py-0.5 rounded bg-terminal-cyan/10 text-terminal-cyan border border-terminal-cyan/20">hybrid</span>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[10px] text-muted-foreground font-mono line-clamp-3 leading-relaxed">{r.content}</p>
+                {r.hybrid && (
+                  <div className="flex gap-3 mt-1.5">
+                    <span className="text-[8px] font-mono text-muted-foreground">vec {(r.vector_score! * 100).toFixed(0)}%</span>
+                    <span className="text-[8px] font-mono text-muted-foreground">bm25 {(r.bm25_score! * 100).toFixed(0)}%</span>
+                  </div>
+                )}
+              </motion.div>
+            ))
           )}
         </div>
-
-        {hasActiveSearch && (
-          <p className="text-[9px] font-mono text-terminal-cyan">
-            {semanticDocs
-              ? `${semanticDocs.length} semantically ranked result${semanticDocs.length !== 1 ? "s" : ""}`
-              : `${(results || []).length} result${(results || []).length !== 1 ? "s" : ""} found`}
-          </p>
-        )}
       </div>
 
-      <div className="flex-1 overflow-y-auto py-1">
-        {loading || isSearching ? (
-          <p className="text-[10px] text-muted-foreground text-center py-4 font-mono animate-pulse">
-            {isSearching ? "Searching..." : "Loading..."}
-          </p>
-        ) : displayDocs.length === 0 ? (
-          <div className="text-center py-8 space-y-2">
-            <FileText className="w-6 h-6 text-muted-foreground mx-auto" />
-            <p className="text-[10px] text-muted-foreground font-mono">
-              {hasActiveSearch ? "No matches" : "No documents — upload or add text to build your knowledge base"}
-            </p>
+      {/* Right: ingest + auto-watch status */}
+      <div className="w-72 border-l border-border bg-sidebar flex flex-col">
+        <div className="p-3 border-b border-border">
+          <span className="text-[10px] uppercase tracking-widest text-terminal-amber font-display">Ingest Document</span>
+        </div>
+
+        <div className="p-3 border-b border-border space-y-2">
+          <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFileRead(f); }}
+            onClick={() => fileRef.current?.click()}
+            className="border border-dashed border-border rounded p-3 text-center cursor-pointer hover:border-primary hover:bg-primary/5 transition-all"
+          >
+            <Upload className="w-4 h-4 mx-auto mb-1 text-muted-foreground" />
+            <p className="text-[9px] font-mono text-muted-foreground">Drop file or click to upload</p>
+            <p className="text-[8px] font-mono text-muted-foreground/60">.txt .md .pdf .docx</p>
           </div>
-        ) : (
-          displayDocs.map((doc) => {
-            const isSemanticResult = "score" in doc;
-            return (
-              <div key={doc.id} className="group px-3 py-2 hover:bg-muted/50 transition-colors border-b border-border/50">
-                <div className="flex items-start gap-2">
-                  <FileText className="w-3.5 h-3.5 mt-0.5 text-terminal-cyan flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-mono text-foreground font-medium block truncate">{doc.title}</span>
-                      {isSemanticResult && (
-                        <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/20 flex-shrink-0">
-                          {(doc as any).score}% match
-                        </span>
-                      )}
-                    </div>
-                    {isSemanticResult && (doc as any).reason && (
-                      <p className="text-[9px] text-accent font-mono mt-0.5 italic">{(doc as any).reason}</p>
-                    )}
-                    <p className="text-[9px] text-muted-foreground font-mono line-clamp-2 mt-0.5">{doc.content.slice(0, 200)}</p>
-                    <span className="text-[8px] text-muted-foreground/60 font-mono">{doc.content.length} chars · {new Date(doc.created_at).toLocaleDateString()}</span>
-                  </div>
-                  <button
-                    onClick={() => removeDocument(doc.id)}
-                    className="p-1 rounded text-muted-foreground hover:text-terminal-red opacity-0 group-hover:opacity-100 transition-all"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+          <input ref={fileRef} type="file" accept=".txt,.md,.pdf,.docx" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFileRead(f); }} />
+          <input
+            value={uploadTitle}
+            onChange={(e) => setUploadTitle(e.target.value)}
+            placeholder="Document title..."
+            className="w-full bg-input border border-border rounded px-2 py-1.5 text-[10px] font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary"
+          />
+          <textarea
+            value={uploadText}
+            onChange={(e) => setUploadText(e.target.value)}
+            placeholder="Or paste text content here..."
+            rows={4}
+            className="w-full bg-input border border-border rounded px-2 py-1.5 text-[10px] font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary resize-none"
+          />
+          <button
+            onClick={handleIngest}
+            disabled={uploading || !uploadText.trim() || mode !== "local"}
+            className="w-full py-1.5 rounded border border-terminal-cyan text-terminal-cyan text-[10px] font-mono hover:bg-terminal-cyan/10 disabled:opacity-40 flex items-center justify-center gap-1.5 transition-colors"
+          >
+            {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Database className="w-3 h-3" />}
+            Ingest to Knowledge Base
+          </button>
+        </div>
+
+        <div className="p-3 border-b border-border flex items-center justify-between">
+          <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-mono">Auto-Watch: /knowledge</span>
+          <RefreshCw className="w-3 h-3 text-muted-foreground" />
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+          {knowledgeFiles.length === 0 ? (
+            <p className="text-[9px] font-mono text-muted-foreground leading-relaxed">
+              {mode === "local"
+                ? "Drop files into backend/knowledge/ to auto-ingest them."
+                : "Local mode required."}
+            </p>
+          ) : (
+            knowledgeFiles.map((f) => (
+              <div key={f.file} className="flex items-start gap-2 py-0.5">
+                {statusIcon(f)}
+                <div className="flex-1 min-w-0">
+                  <span className="text-[10px] font-mono text-foreground truncate block">{f.file}</span>
+                  <span className="text-[8px] font-mono text-muted-foreground">
+                    {f.status === "ok" ? `${f.chunks} chunks` : f.error || f.status}
+                  </span>
                 </div>
               </div>
-            );
-          })
-        )}
-      </div>
-
-      <div className="p-2 border-t border-border">
-        <p className="text-[8px] font-mono text-muted-foreground text-center">
-          {documents.length} document{documents.length !== 1 ? "s" : ""} indexed · Full-text + AI semantic search
-        </p>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );

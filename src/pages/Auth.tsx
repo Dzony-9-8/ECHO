@@ -13,6 +13,7 @@ const Auth = () => {
   const [message, setMessage] = useState("");
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
+  const [rememberMe, setRememberMe] = useState(() => localStorage.getItem("echo_remember_me") === "true");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,6 +164,23 @@ const Auth = () => {
               placeholder="••••••••"
             />
           </div>
+
+          {isLogin && (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => {
+                  setRememberMe(e.target.checked);
+                  localStorage.setItem("echo_remember_me", String(e.target.checked));
+                }}
+                className="w-3.5 h-3.5 rounded border-border accent-primary"
+              />
+              <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
+                Remember me
+              </span>
+            </label>
+          )}
 
           {error && (
             <div className="text-xs text-terminal-red font-mono border border-terminal-red/30 bg-terminal-red/10 rounded px-3 py-2">

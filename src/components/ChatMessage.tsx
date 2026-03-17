@@ -5,8 +5,12 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { motion } from "framer-motion";
 import { ChatMessage as ChatMessageType } from "@/lib/api";
-import { Bot, User, Cpu, Image, FileText, Edit3, RefreshCw, Copy, Check, Hash, GitBranch } from "lucide-react";
-import { useState, useMemo, lazy, Suspense } from "react";
+import {
+  Bot, User, Cpu, Image, FileText, Edit3, RefreshCw,
+  Copy, Check, Hash, GitBranch, ThumbsUp, ThumbsDown, Volume2,
+} from "lucide-react";
+import { useState, useMemo, lazy, Suspense, memo } from "react";
+import { getBackendMode, submitFeedback, getBackendUrl } from "@/lib/api";
 import CodeBlock from "./CodeBlock";
 import BranchIndicator, { type BranchInfo } from "./BranchIndicator";
 import { estimateTokens, formatTokenCount } from "@/lib/tokens";
@@ -22,14 +26,55 @@ interface Props {
   onSelectBranch?: (conversationId: string) => void;
 }
 
-const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }: Props) => {
-  const isUser = message.role === "user";
-  const [copied, setCopied] = useState(false);
-  const [editing, setEditing] = useState(false);
+/** Animated gradient bar shown while the model is thinking */
+const StreamingBar = () => (
+  <div className="flex items-center gap-2.5 py-0.5">
+    <div
+      className="h-0.5 rounded-full w-28"
+      style={{
+        background:
+          "linear-gradient(90deg, hsl(142 70% 45% / 0.1), hsl(142 70% 45% / 1), hsl(185 60% 50% / 0.7), hsl(142 70% 45% / 0.1))",
+        backgroundSize: "200% auto",
+        animation: "shimmer 1.4s linear infinite",
+      }}
+    />
+    <span className="text-[10px] text-muted-foreground font-mono tracking-wide">thinking…</span>
+  </div>
+);
+
+const ChatMessage = ({
+  message,
+  onEdit,
+  onRegenerate,
+  onBranch,
+  onSelectBranch,
+}: Props) => {
+  const isUser    = message.role === "user";
+  const [copied, setCopied]           = useState(false);
+  const [editing, setEditing]         = useState(false);
   const [editContent, setEditContent] = useState(message.content);
+  const [feedback, setFeedback]       = useState<"up" | "down" | null>(null);
+  const [speaking, setSpeaking]       = useState(false);
+
+  const handleSpeak = async () => {
+    if (speaking) return;
+    setSpeaking(true);
+    try {
+      await fetch(`${getBackendUrl()}/api/voice/speak`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: message.content.slice(0, 2000) }),
+      });
+    } catch {
+      // TTS not available — ignore silently
+    } finally {
+      setTimeout(() => setSpeaking(false), 1500);
+    }
+  };
 
   const tokenCount = useMemo(() => estimateTokens(message.content), [message.content]);
-  const branches = useMemo(() => getBranchesForMessage(message.id), [message.id]);
+  const branches   = useMemo(() => getBranchesForMessage(message.id), [message.id]);
+  const isStreaming = message.status === "streaming";
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -38,48 +83,51 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
   };
 
   const handleEditSubmit = () => {
-    if (editContent.trim() && onEdit) {
-      onEdit(message.id, editContent.trim());
-    }
+    if (editContent.trim() && onEdit) onEdit(message.id, editContent.trim());
     setEditing(false);
   };
 
   return (
     <>
       <motion.div
-        initial={{ opacity: 0, y: 8 }}
+        initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
-        className={`group flex gap-3 px-4 py-3 ${isUser ? "flex-row-reverse" : ""}`}
+        transition={{ duration: 0.22, ease: "easeOut" }}
+        className={`group flex gap-3 px-4 py-3.5 ${isUser ? "flex-row-reverse" : ""}`}
       >
-        {/* Avatar */}
-        <div
-          className={`flex-shrink-0 w-8 h-8 rounded flex items-center justify-center border ${
-            isUser
-              ? "border-terminal-cyan bg-terminal-cyan/10"
-              : "border-primary bg-primary/10"
-          }`}
-        >
-          {isUser ? (
-            <User className="w-4 h-4 text-terminal-cyan" />
-          ) : (
-            <Bot className="w-4 h-4 text-primary" />
-          )}
+        {/* ── Avatar ── */}
+        <div className="flex-shrink-0">
+          <div
+            className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-all ${
+              isUser
+                ? "border-terminal-cyan/35 bg-terminal-cyan/8"
+                : "border-primary/35 bg-primary/8"
+            }`}
+            style={
+              isStreaming && !isUser
+                ? { animation: "pulse-glow 1.6s ease-in-out infinite", boxShadow: "0 0 0 2px hsl(142 70% 45% / 0.25)" }
+                : {}
+            }
+          >
+            {isUser
+              ? <User className="w-4 h-4 text-terminal-cyan" />
+              : <Bot className="w-4 h-4 text-primary" />
+            }
+          </div>
         </div>
 
-        {/* Content */}
-        <div className={`flex-1 max-w-[80%] ${isUser ? "text-right" : ""}`}>
-          {/* Agent/Model badge */}
+        {/* ── Content ── */}
+        <div className={`flex-1 min-w-0 flex flex-col ${isUser ? "items-end" : "items-start"}`}>
+
+          {/* Agent badge */}
           {message.agent && (
-            <div className={`flex items-center gap-1.5 mb-1 ${isUser ? "justify-end" : ""}`}>
+            <div className={`flex items-center gap-1.5 mb-1.5 ${isUser ? "justify-end" : ""}`}>
               <Cpu className="w-3 h-3 text-terminal-amber" />
-              <span className="text-[10px] uppercase tracking-widest text-terminal-amber">
+              <span className="text-[10px] uppercase tracking-widest text-terminal-amber font-mono">
                 {message.agent}
               </span>
               {message.model && (
-                <span className="text-[10px] text-muted-foreground">
-                  → {message.model}
-                </span>
+                <span className="text-[10px] text-muted-foreground font-mono">› {message.model}</span>
               )}
             </div>
           )}
@@ -88,7 +136,7 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
           {message.files && message.files.length > 0 && (
             <div className={`flex gap-2 mb-2 flex-wrap ${isUser ? "justify-end" : ""}`}>
               {message.files.map((file, i) => (
-                <div key={i} className="rounded border border-border bg-muted/50 p-1.5 flex-shrink-0">
+                <div key={i} className="rounded-md border border-border bg-muted/50 p-1.5 flex-shrink-0 hover:border-primary/40 transition-colors">
                   {file.type === "image" && file.preview ? (
                     <div className="relative">
                       <img src={file.preview} alt={file.name} className="w-24 h-24 object-cover rounded" />
@@ -111,42 +159,38 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
             </div>
           )}
 
-          {/* Editing mode */}
+          {/* ── Bubble ── */}
           {editing ? (
-            <div className="inline-block text-left w-full">
+            <div className="w-full max-w-[85%]">
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
-                className="w-full bg-input border border-primary rounded px-3 py-2 text-sm text-foreground font-mono resize-none focus:outline-none"
+                className="w-full bg-input border border-primary/50 rounded-md px-3 py-2.5 text-sm text-foreground font-mono resize-none focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary/25 transition-all"
                 rows={3}
                 autoFocus
               />
-              <div className="flex gap-2 mt-1">
+              <div className="flex gap-3 mt-1.5">
                 <button onClick={handleEditSubmit} className="text-[10px] font-mono text-primary hover:underline">Save & Resend</button>
                 <button onClick={() => setEditing(false)} className="text-[10px] font-mono text-muted-foreground hover:underline">Cancel</button>
               </div>
             </div>
           ) : (
             <div
-              className={`inline-block text-left rounded px-3 py-2 text-sm leading-relaxed ${
+              className={`inline-block text-left rounded-xl px-4 py-3 text-sm leading-relaxed max-w-[85%] transition-all ${
                 isUser
-                  ? "bg-terminal-cyan/10 border border-terminal-cyan/30 text-terminal-cyan"
-                  : "bg-muted border border-border text-foreground"
+                  ? "bg-terminal-cyan/8 border border-terminal-cyan/22 text-foreground"
+                  : "bg-card border border-border/50 text-foreground"
               }`}
+              style={
+                isUser
+                  ? { boxShadow: "0 2px 10px hsl(185 60% 50% / 0.07)" }
+                  : { boxShadow: "0 2px 10px hsl(0 0% 0% / 0.18)" }
+              }
             >
-              {message.status === "streaming" && !message.content ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-muted-foreground font-mono">
-                    {message.agent || "ECHO"} is thinking
-                  </span>
-                  <span className="flex gap-0.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "150ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary animate-bounce" style={{ animationDelay: "300ms" }} />
-                  </span>
-                </div>
+              {isStreaming && !message.content ? (
+                <StreamingBar />
               ) : (
-                <div className="prose prose-sm prose-invert max-w-none [&_code]:text-terminal-amber [&_code]:bg-muted [&_pre]:bg-transparent [&_pre]:border-none [&_pre]:p-0 [&_pre]:m-0">
+                <div className="prose prose-sm prose-invert max-w-none [&_code]:text-terminal-amber [&_code:not(pre_code)]:bg-muted [&_pre]:bg-transparent [&_pre]:border-none [&_pre]:p-0 [&_pre]:m-0">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex]}
@@ -155,27 +199,36 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
                         const match = /language-(\w+)/.exec(className || "");
                         const codeStr = String(children).replace(/\n$/, "");
                         if (match) {
-                          // Mermaid diagram
                           if (match[1] === "mermaid") {
                             return (
-                              <Suspense fallback={<div className="text-[10px] font-mono text-muted-foreground p-2">Loading diagram...</div>}>
+                              <Suspense fallback={<div className="text-[10px] font-mono text-muted-foreground p-2">Loading diagram…</div>}>
                                 <MermaidDiagram>{codeStr}</MermaidDiagram>
                               </Suspense>
                             );
                           }
                           return <CodeBlock language={match[1]}>{codeStr}</CodeBlock>;
                         }
+                        return <code className={className} {...props}>{children}</code>;
+                      },
+                      table({ children }) {
                         return (
-                          <code className={className} {...props}>
+                          <div className="overflow-x-auto my-2 rounded-md border border-border">
+                            <table className="w-full text-xs">{children}</table>
+                          </div>
+                        );
+                      },
+                      blockquote({ children }) {
+                        return (
+                          <blockquote className="border-l-2 border-primary/60 pl-3 my-2 text-muted-foreground italic bg-primary/5 py-2 pr-2 rounded-r">
                             {children}
-                          </code>
+                          </blockquote>
                         );
                       },
                     }}
                   >
                     {message.content}
                   </ReactMarkdown>
-                  {message.status === "streaming" && message.content && (
+                  {isStreaming && message.content && (
                     <span className="cursor-blink text-primary ml-0.5">▊</span>
                   )}
                 </div>
@@ -183,37 +236,74 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
             </div>
           )}
 
-          {/* Action buttons on hover */}
-          {!editing && message.status !== "streaming" && (
-            <div className={`flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${isUser ? "justify-end" : ""}`}>
-              <button onClick={handleCopy} className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors" title="Copy">
+          {/* ── Hover action toolbar ── */}
+          {!editing && !isStreaming && (
+            <div
+              className={`flex items-center gap-0.5 mt-1.5 opacity-0 group-hover:opacity-100 transition-all duration-200 ${
+                isUser ? "justify-end" : ""
+              }`}
+            >
+              <button onClick={handleCopy} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all active:scale-90" title="Copy">
                 {copied ? <Check className="w-3 h-3 text-primary" /> : <Copy className="w-3 h-3" />}
               </button>
+
               {isUser && onEdit && (
-                <button onClick={() => { setEditContent(message.content); setEditing(true); }} className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors" title="Edit">
+                <button onClick={() => { setEditContent(message.content); setEditing(true); }} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all active:scale-90" title="Edit">
                   <Edit3 className="w-3 h-3" />
                 </button>
               )}
+
               {!isUser && onRegenerate && (
-                <button onClick={() => onRegenerate(message.id)} className="p-1 rounded text-muted-foreground hover:text-foreground transition-colors" title="Regenerate">
+                <button onClick={() => onRegenerate(message.id)} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all active:scale-90" title="Regenerate">
                   <RefreshCw className="w-3 h-3" />
                 </button>
               )}
-              {onBranch && message.id !== "welcome" && (
+
+              {!isUser && getBackendMode() === "local" && message.id !== "welcome" && (
+                <>
+                  <button onClick={() => { setFeedback("up"); submitFeedback(message.id, 5); }}
+                    className={`p-1.5 rounded transition-all active:scale-90 ${feedback === "up" ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-primary hover:bg-muted/60"}`}
+                    title="Good response">
+                    <ThumbsUp className="w-3 h-3" />
+                  </button>
+                  <button onClick={() => { setFeedback("down"); submitFeedback(message.id, 1); }}
+                    className={`p-1.5 rounded transition-all active:scale-90 ${feedback === "down" ? "text-terminal-red bg-terminal-red/10" : "text-muted-foreground hover:text-terminal-red hover:bg-muted/60"}`}
+                    title="Poor response">
+                    <ThumbsDown className="w-3 h-3" />
+                  </button>
+                </>
+              )}
+
+              {!isUser && (
                 <button
-                  onClick={() => onBranch(message.id)}
-                  className="p-1 rounded text-muted-foreground hover:text-accent transition-colors"
-                  title="Branch from here"
+                  onClick={handleSpeak}
+                  className={`p-1.5 rounded transition-all active:scale-90 ${
+                    speaking
+                      ? "text-terminal-cyan bg-terminal-cyan/10"
+                      : "text-muted-foreground hover:text-terminal-cyan hover:bg-muted/60"
+                  }`}
+                  title="Read aloud"
                 >
+                  <Volume2 className={`w-3 h-3 ${speaking ? "animate-pulse" : ""}`} />
+                </button>
+              )}
+
+              {onBranch && message.id !== "welcome" && (
+                <button onClick={() => onBranch(message.id)} className="p-1.5 rounded text-muted-foreground hover:text-accent hover:bg-muted/60 transition-all active:scale-90" title="Branch from here">
                   <GitBranch className="w-3 h-3" />
                 </button>
               )}
-              <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground font-mono ml-1" title={`~${tokenCount} tokens`}>
+
+              <div className="w-px h-3 bg-border mx-1" />
+
+              <span className="flex items-center gap-0.5 text-[9px] text-muted-foreground font-mono" title={`~${tokenCount} tokens`}>
                 <Hash className="w-2.5 h-2.5" />
                 {formatTokenCount(tokenCount)}
               </span>
-              <span className="text-[10px] text-muted-foreground font-mono ml-1">
-                {message.timestamp.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              <span className="text-[9px] text-muted-foreground font-mono ml-1.5">
+                {message.timestamp.toLocaleTimeString("en-US", {
+                  hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+                })}
               </span>
             </div>
           )}
@@ -227,4 +317,10 @@ const ChatMessage = ({ message, onEdit, onRegenerate, onBranch, onSelectBranch }
   );
 };
 
-export default ChatMessage;
+export default memo(
+  ChatMessage,
+  (prev, next) =>
+    prev.message.id      === next.message.id &&
+    prev.message.content === next.message.content &&
+    prev.message.status  === next.message.status,
+);
