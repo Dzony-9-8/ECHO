@@ -68,7 +68,6 @@ export default function ModelPullDialog({ model, open, onClose, onSuccess }: Pro
               setStatus("Pull complete!");
               setDone(true);
               setPulling(false);
-              onSuccess();
               return;
             }
           } catch { /* ignore */ }
@@ -110,7 +109,7 @@ export default function ModelPullDialog({ model, open, onClose, onSuccess }: Pro
           </Button>
         )}
         {done && (
-          <Button onClick={handleClose} className="mt-4 w-full">
+          <Button onClick={() => { onSuccess(); onClose(); }} className="mt-4 w-full">
             Done
           </Button>
         )}
