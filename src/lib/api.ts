@@ -37,6 +37,7 @@ export interface ChatMessage {
   agent?: string;
   status?: "pending" | "streaming" | "complete" | "error";
   files?: { name: string; type: "image" | "document"; preview?: string }[];
+  weatherData?: WeatherData;
 }
 
 export interface AgentInfo {
@@ -121,7 +122,8 @@ export const fetchSystemMetrics = async (): Promise<RealSystemMetrics | null> =>
 const parseSSEStream = async (
   response: Response,
   onDelta: (text: string) => void,
-  onStep?: (step: ChatStepEvent) => void
+  onStep?: (step: ChatStepEvent) => void,
+  onWeatherData?: (data: WeatherData) => void
 ): Promise<string> => {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("No response body");
@@ -160,6 +162,10 @@ const parseSSEStream = async (
           onStep({ agent: parsed.agent || "", text: parsed.text || "", status: parsed.status || "done" });
           continue;
         }
+        if (parsed.type === "weather_data" && onWeatherData) {
+          onWeatherData(parsed.data as WeatherData);
+          continue;
+        }
         const content = parsed.choices?.[0]?.delta?.content as string | undefined;
         if (content) {
           fullText += content;
@@ -196,6 +202,10 @@ const parseSSEStream = async (
 
         if (parsed.type === "step" && onStep) {
           onStep({ agent: parsed.agent || "", text: parsed.text || "", status: parsed.status || "done" });
+          continue;
+        }
+        if (parsed.type === "weather_data" && onWeatherData) {
+          onWeatherData(parsed.data as WeatherData);
           continue;
         }
         const content = parsed.choices?.[0]?.delta?.content as string | undefined;
@@ -254,7 +264,8 @@ const sendLocalMessage = async (
   model?: string,
   images?: string[],
   onStep?: (step: ChatStepEvent) => void,
-  attachments?: Array<{ name: string; type: string; content: string }>
+  attachments?: Array<{ name: string; type: string; content: string }>,
+  onWeatherData?: (data: WeatherData) => void
 ): Promise<string> => {
   // Load pipeline settings from localStorage
   let enablePlanning = true;
@@ -316,10 +327,10 @@ const sendLocalMessage = async (
 
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
     if (onChunk) {
-      return parseSSEStream(response, onChunk, onStep);
+      return parseSSEStream(response, onChunk, onStep, onWeatherData);
     }
     // No streaming callback — collect full text from SSE
-    return parseSSEStream(response, () => {}, onStep);
+    return parseSSEStream(response, () => {}, onStep, onWeatherData);
   }
 
   const data = await response.json();
@@ -334,12 +345,13 @@ export const sendMessage = async (
   model?: string,
   images?: string[],
   onStep?: (step: ChatStepEvent) => void,
-  attachments?: Array<{ name: string; type: string; content: string }>
+  attachments?: Array<{ name: string; type: string; content: string }>,
+  onWeatherData?: (data: WeatherData) => void
 ): Promise<string> => {
   const mode = getBackendMode();
 
   if (mode === "local") {
-    return sendLocalMessage(messages, onChunk, model, images, onStep, attachments);
+    return sendLocalMessage(messages, onChunk, model, images, onStep, attachments, onWeatherData);
   }
 
   return sendCloudMessage(messages, depth, onChunk, model);

@@ -5,6 +5,7 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { motion } from "framer-motion";
 import { ChatMessage as ChatMessageType } from "@/lib/api";
+import WeatherCard from "@/components/WeatherCard";
 import {
   Bot, User, Cpu, Image, FileText, Edit3, RefreshCw,
   Copy, Check, Hash, GitBranch, ThumbsUp, ThumbsDown, Volume2, Eye,
@@ -228,6 +229,11 @@ const ChatMessage = ({
             <>
               {steps && steps.length > 0 && (
                 <ThinkingSteps steps={steps} isStreaming={isStreaming ?? false} />
+              )}
+              {!isUser && message.weatherData && (
+                <div className="mb-2 w-full max-w-[85%]">
+                  <WeatherCard data={message.weatherData} />
+                </div>
               )}
             <div
               className={`inline-block text-left rounded-xl px-4 py-3 text-sm leading-relaxed max-w-[85%] transition-all ${

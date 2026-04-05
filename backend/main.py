@@ -3356,6 +3356,17 @@ def estimate_complexity(text: str) -> int:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Weather SSE helper — prepends a weather_data event to any inner generator
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def prepend_weather(weather_payload: dict, inner_gen):
+    """Yield weather SSE event first, then delegate to the inner generator."""
+    yield f"data: {json.dumps({'type': 'weather_data', 'data': weather_payload})}\n\n"
+    async for chunk in inner_gen:
+        yield chunk
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main chat endpoint — now with full pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -3427,6 +3438,24 @@ async def chat(req: ChatRequest):
                     msg["content"] = "\n\n".join(attachment_blocks) + "\n\n" + msg["content"]
                     break
 
+    # ── Weather pre-fetch for SSE injection ─────────────────────────────
+    _weather_payload: dict | None = None
+    _weather_keywords = {"weather", "temperature", "forecast", "rain", "snow", "wind", "humidity", "sunny", "cloudy"}
+    if any(kw in user_text.lower() for kw in _weather_keywords):
+        _city_match = re.search(
+            r'\b(?:in|at|for)\s+([A-Z][a-zA-Z\s]{2,25}?)(?:\?|$|,|\s+today|\s+now|\s+right)',
+            user_text, re.IGNORECASE
+        )
+        if not _city_match:
+            _city_match = re.search(r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)', user_text)
+        if _city_match:
+            try:
+                _wx = await get_weather(_city_match.group(1).strip())
+                if _wx.get("success"):
+                    _weather_payload = _wx
+            except Exception:
+                pass
+
     # ── Feature #6: Inject relevant memories ────────────────────────────
     try:
         memories = await recall_relevant_memories(user_text, limit=3)
@@ -3470,8 +3499,9 @@ async def chat(req: ChatRequest):
                 yield f"data: {json.dumps(meta)}\n\n"
                 yield "data: [DONE]\n\n"
 
+            gen = prepend_weather(_weather_payload, cached_stream()) if _weather_payload else cached_stream()
             return StreamingResponse(
-                cached_stream(),
+                gen,
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
@@ -3522,8 +3552,9 @@ async def chat(req: ChatRequest):
                     yield f'data: {{"error": "Vision error: {str(e)}", "error_type": "unknown"}}\n\n'
                     yield "data: [DONE]\n\n"
 
+            gen = prepend_weather(_weather_payload, vision_stream()) if _weather_payload else vision_stream()
             return StreamingResponse(
-                vision_stream(),
+                gen,
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
@@ -3564,8 +3595,9 @@ async def chat(req: ChatRequest):
                 yield f"data: {json.dumps(sse_data)}\n\n"
                 yield "data: [DONE]\n\n"
 
+            gen = prepend_weather(_weather_payload, wf_stream()) if _weather_payload else wf_stream()
             return StreamingResponse(
-                wf_stream(),
+                gen,
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
@@ -3669,8 +3701,9 @@ async def chat(req: ChatRequest):
                         finally:
                             yield "data: [DONE]\n\n"
 
+                    gen = prepend_weather(_weather_payload, progressive_pipeline_stream()) if _weather_payload else progressive_pipeline_stream()
                     return StreamingResponse(
-                        progressive_pipeline_stream(),
+                        gen,
                         media_type="text/event-stream",
                         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
                     )
@@ -3704,8 +3737,9 @@ async def chat(req: ChatRequest):
                         yield f"data: {json.dumps(sse_data)}\n\n"
                         yield "data: [DONE]\n\n"
 
+                    gen = prepend_weather(_weather_payload, pipeline_stream()) if _weather_payload else pipeline_stream()
                     return StreamingResponse(
-                        pipeline_stream(),
+                        gen,
                         media_type="text/event-stream",
                         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
                     )
@@ -3746,8 +3780,9 @@ async def chat(req: ChatRequest):
                     sse_data = {"choices": [{"delta": {"content": spec_result}}]}
                     yield f"data: {json.dumps(sse_data)}\n\n"
                     yield "data: [DONE]\n\n"
+                gen = prepend_weather(_weather_payload, spec_stream()) if _weather_payload else spec_stream()
                 return StreamingResponse(
-                    spec_stream(),
+                    gen,
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
                 )
@@ -3800,8 +3835,9 @@ async def chat(req: ChatRequest):
                     messages + [{"role": "assistant", "content": full_response}]
                 ))
 
+    gen = prepend_weather(_weather_payload, stream_and_track()) if _weather_payload else stream_and_track()
     return StreamingResponse(
-        stream_and_track(),
+        gen,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )

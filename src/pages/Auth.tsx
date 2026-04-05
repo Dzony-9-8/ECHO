@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { Terminal, LogIn, UserPlus, Loader2, KeyRound } from "lucide-react";
 
 const Auth = () => {
@@ -64,10 +63,32 @@ const Auth = () => {
 
   const handleGoogleSignIn = async () => {
     setError("");
-    const { error } = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
-    });
-    if (error) setError(error.message || "Google sign-in failed");
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+      if (error) {
+        if (
+          error.message?.toLowerCase().includes("provider") ||
+          error.message?.toLowerCase().includes("not enabled")
+        ) {
+          setError(
+            "Google sign-in is not configured. Enable Google OAuth in your Supabase project: Authentication → Providers → Google."
+          );
+        } else {
+          setError(error.message || "Google sign-in failed");
+        }
+      }
+      // Browser redirects automatically — no navigate() needed
+    } catch (err: any) {
+      setError(err.message || "Google sign-in failed");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

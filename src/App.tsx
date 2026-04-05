@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { ThemeProvider } from "@/hooks/useTheme";
 import Index from "./pages/Index";
 import Auth from "./pages/Auth";
+import AuthCallback from "./pages/AuthCallback";
 import ResetPassword from "./pages/ResetPassword";
 import SharedView from "./pages/SharedView";
 import NotFound from "./pages/NotFound";
@@ -49,6 +50,7 @@ const App = () => {
             <BrowserRouter>
               <Routes>
                 <Route path="/auth" element={<AuthRoute><Auth /></AuthRoute>} />
+                <Route path="/auth/callback" element={<AuthCallback />} />
                 <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/shared" element={<SharedView />} />
                 <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />

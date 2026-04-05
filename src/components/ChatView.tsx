@@ -390,7 +390,12 @@ const ChatView = () => {
             }
           });
         },
-        backendAttachments.length > 0 ? backendAttachments : undefined
+        backendAttachments.length > 0 ? backendAttachments : undefined,
+        (weatherData) => {
+          setMessages((prev) =>
+            prev.map((m) => m.id === msgId ? { ...m, weatherData } : m)
+          );
+        }
       );
 
       const finalContent = response || assistantMsg.content;
