@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,13 +14,14 @@ export default function ModelCompareView() {
   const [responseB, setResponseB] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Load local models on mount
-  useState(() => {
+  useEffect(() => {
     fetchLocalModels().then((m) => {
-      setModels(m.map((x) => x.name));
-      if (m.length >= 2) { setModelA(m[0].name); setModelB(m[1].name); }
+      const names = m.map((x) => x.name);
+      setModels(names);
+      if (names.length >= 1) setModelA(names[0]);
+      if (names.length >= 2) setModelB(names[1]);
     });
-  });
+  }, []);
 
   const compare = async () => {
     if (!prompt.trim() || !modelA || !modelB) return;
@@ -56,10 +57,16 @@ export default function ModelCompareView() {
         </Select>
       </div>
       <Textarea
-        placeholder="Enter your prompt…"
+        placeholder="Enter your prompt… (Ctrl+Enter to compare)"
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         rows={3}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            compare();
+          }
+        }}
       />
       <Button onClick={compare} disabled={loading || !modelA || !modelB || !prompt.trim()}>
         {loading ? "Comparing…" : "Compare Models"}
