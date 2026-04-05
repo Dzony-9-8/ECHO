@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Mic, MicOff, Paperclip, X, FileText, Layers, Image as ImageIcon } from "lucide-react";
+import { Send, Mic, MicOff, Paperclip, X, FileText, Layers, Image as ImageIcon, Wand2 } from "lucide-react";
 import {
   type FileAttachment,
   getFileType,
@@ -9,6 +9,7 @@ import {
   ACCEPT_STRING,
   getFileIcon,
 } from "@/lib/files";
+import { sendMessage } from "@/lib/api";
 import ModelSelector, { getSelectedModel } from "./ModelSelector";
 import PromptTemplates from "./PromptTemplates";
 import SlashCommandMenu, { type SlashCommand } from "./SlashCommandMenu";
@@ -33,6 +34,7 @@ const ChatInput = ({ onSend, disabled }: Props) => {
   const [model, setModel] = useState(getSelectedModel);
   const [isListening, setIsListening] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [isFixing, setIsFixing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
@@ -193,6 +195,27 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     textareaRef.current?.focus();
   };
 
+  const handleFixGrammar = useCallback(async () => {
+    if (!input.trim() || isFixing) return;
+    setIsFixing(true);
+    try {
+      const msgs = [{
+        id: "fix",
+        role: "user" as const,
+        content: `Fix the grammar and spelling in the following text. Return only the corrected text with no explanation, no quotes, no commentary:\n\n${input}`,
+        timestamp: new Date(),
+      }];
+      let result = "";
+      await sendMessage(msgs, (chunk) => { result = chunk; }, 0, model);
+      if (result.trim()) setInput(result.trim());
+    } catch {
+      // silently fail — input stays unchanged
+    } finally {
+      setIsFixing(false);
+      textareaRef.current?.focus();
+    }
+  }, [input, isFixing, model]);
+
   // Drag and drop handlers
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -302,6 +325,16 @@ const ChatInput = ({ onSend, disabled }: Props) => {
         >
           <Paperclip className="w-4 h-4" />
         </button>
+
+        {/* Fix grammar */}
+        <button
+          onClick={handleFixGrammar}
+          disabled={disabled || !input.trim() || isFixing}
+          className="p-2.5 rounded border border-terminal-cyan bg-terminal-cyan/10 text-terminal-cyan hover:bg-terminal-cyan/20 transition-colors disabled:opacity-30"
+          title="Fix grammar & spelling with AI"
+        >
+          <Wand2 className={`w-4 h-4 ${isFixing ? "animate-pulse" : ""}`} />
+        </button>
         <input
           ref={fileInputRef}
           type="file"
@@ -329,6 +362,7 @@ const ChatInput = ({ onSend, disabled }: Props) => {
             placeholder={files.length > 0 ? "Describe what to do with these files..." : "Enter command or type / for commands..."}
             disabled={disabled}
             rows={1}
+            spellCheck={true}
             className="w-full bg-input border border-border rounded px-3 py-2.5 pl-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:glow-border resize-none font-mono disabled:opacity-50"
           />
         </div>
