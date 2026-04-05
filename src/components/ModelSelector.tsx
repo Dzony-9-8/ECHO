@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ChevronDown, Zap, Brain, Sparkles, Loader2 } from "lucide-react";
 import { getBackendMode, fetchLocalModels, type LocalModel } from "@/lib/api";
+import ModelPullDialog from "@/components/ModelPullDialog";
 
 export interface ModelOption {
   id: string;
@@ -60,6 +61,7 @@ const ModelSelector = ({ value, onChange }: Props) => {
   const [open, setOpen] = useState(false);
   const [localModels, setLocalModels] = useState<ModelOption[]>([]);
   const [loading, setLoading] = useState(false);
+  const [pullTarget, setPullTarget] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const mode = getBackendMode();
 
@@ -147,7 +149,38 @@ const ModelSelector = ({ value, onChange }: Props) => {
               </button>
             );
           })}
+          {mode === "local" && (
+            <div className="border-t pt-1 pb-1">
+              <button
+                className="w-full text-left px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  const name = prompt("Model name to pull (e.g. llama3.2:3b):");
+                  if (name?.trim()) setPullTarget(name.trim());
+                }}
+              >
+                + Pull a model from Ollama…
+              </button>
+            </div>
+          )}
         </div>
+      )}
+      {pullTarget && (
+        <ModelPullDialog
+          model={pullTarget}
+          open={!!pullTarget}
+          onClose={() => setPullTarget(null)}
+          onSuccess={() => {
+            setPullTarget(null);
+            if (getBackendMode() === "local") {
+              fetchLocalModels().then((models) => {
+                const filtered = models.filter(
+                  (m) => m.type !== "embedding" && !BLOCKED_MODEL_PATTERNS.test(m.name)
+                );
+                setLocalModels(filtered.map(localModelToOption));
+              });
+            }
+          }}
+        />
       )}
     </div>
   );
