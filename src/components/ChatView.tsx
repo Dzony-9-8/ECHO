@@ -420,8 +420,15 @@ const ChatView = () => {
       }
     } catch (err: any) {
       const errMsg = err?.message || "Connection failed";
+      const errType = err?.errorType || "";
 
-      if (errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit")) {
+      if (errType === "connection" || errMsg.toLowerCase().includes("ollama is not running")) {
+        toast.error("Ollama is not running — open a terminal and run: ollama serve");
+      } else if (errType === "model_missing" || errMsg.toLowerCase().includes("model not found")) {
+        toast.error(errMsg);
+      } else if (errType === "timeout" || errMsg.toLowerCase().includes("timed out")) {
+        toast.warning("Ollama is still loading the model — please wait a moment and try again.");
+      } else if (errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit")) {
         toast.error("Rate limit exceeded — please wait a moment and try again.");
       } else if (errMsg.includes("402") || errMsg.toLowerCase().includes("credit")) {
         toast.error("AI credits exhausted — add credits in workspace settings.");

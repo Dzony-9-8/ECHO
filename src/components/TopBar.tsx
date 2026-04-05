@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { checkHealth } from "@/lib/api";
 import { useTheme } from "@/hooks/useTheme";
 import SystemMetrics from "./SystemMetrics";
+import LocalStatusBar from "./LocalStatusBar";
 
 interface Props {
   viewLabel?: string;
@@ -55,6 +56,7 @@ const TopBar = ({ viewLabel }: Props) => {
       <div className="flex-1" />
 
       <div className="flex items-center gap-3 flex-shrink-0">
+        <LocalStatusBar />
         <SystemMetrics />
         <div className="w-px h-4 bg-border" />
 

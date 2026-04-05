@@ -2679,11 +2679,20 @@ async def ollama_stream(
                     continue
 
     except httpx.ConnectError:
-        yield 'data: {"error": "Cannot connect to Ollama. Is it running? Run: ollama serve"}\n\n'
+        yield 'data: {"error": "Ollama is not running. Start it with: ollama serve", "error_type": "connection"}\n\n'
+        yield "data: [DONE]\n\n"
+    except httpx.ReadTimeout:
+        yield 'data: {"error": "Ollama timed out — the model may still be loading. Try again in a few seconds.", "error_type": "timeout"}\n\n'
+        yield "data: [DONE]\n\n"
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            yield f'data: {{"error": "Model not found in Ollama. Run: ollama pull {model}", "error_type": "model_missing"}}\n\n'
+        else:
+            yield f'data: {{"error": "Ollama HTTP error {e.response.status_code}", "error_type": "http_error"}}\n\n'
         yield "data: [DONE]\n\n"
     except Exception as e:
         _logger.error(f"Stream error: {e}")
-        yield f'data: {{"error": "Stream error: {str(e)}"}}\n\n'
+        yield f'data: {{"error": "Stream error: {str(e)}", "error_type": "unknown"}}\n\n'
         yield "data: [DONE]\n\n"
 
 
@@ -3479,21 +3488,32 @@ async def chat(req: ChatRequest):
                     "keep_alive": "10m",
                 }
                 _client = await get_ollama_client()
-                async with _client.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload, timeout=120.0) as resp:
-                    async for line in resp.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                            if chunk.get("done"):
-                                yield "data: [DONE]\n\n"
-                                break
-                            content = chunk.get("message", {}).get("content", "")
-                            if content:
-                                sse = {"choices": [{"delta": {"content": content}}]}
-                                yield f"data: {json.dumps(sse)}\n\n"
-                        except Exception:
-                            continue
+                try:
+                    async with _client.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload, timeout=120.0) as resp:
+                        async for line in resp.aiter_lines():
+                            if not line.strip():
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                                if chunk.get("done"):
+                                    yield "data: [DONE]\n\n"
+                                    break
+                                content = chunk.get("message", {}).get("content", "")
+                                if content:
+                                    sse = {"choices": [{"delta": {"content": content}}]}
+                                    yield f"data: {json.dumps(sse)}\n\n"
+                            except Exception:
+                                continue
+                except httpx.ConnectError:
+                    yield 'data: {"error": "Cannot connect to Ollama for vision — is it running?", "error_type": "connection"}\n\n'
+                    yield "data: [DONE]\n\n"
+                except httpx.ReadTimeout:
+                    yield 'data: {"error": "Vision model timed out — the model may still be loading.", "error_type": "timeout"}\n\n'
+                    yield "data: [DONE]\n\n"
+                except Exception as e:
+                    _logger.error(f"Vision stream error: {e}")
+                    yield f'data: {{"error": "Vision error: {str(e)}", "error_type": "unknown"}}\n\n'
+                    yield "data: [DONE]\n\n"
 
             return StreamingResponse(
                 vision_stream(),
@@ -4301,6 +4321,50 @@ async def manage_model(req: ModelManageRequest):
 
     else:
         raise HTTPException(status_code=400, detail=f"Invalid action: {req.action}")
+
+
+class PullModelRequest(BaseModel):
+    model: str
+
+
+@app.post("/api/models/pull")
+async def pull_model(req: PullModelRequest):
+    """Stream Ollama pull progress as SSE."""
+    async def pull_stream():
+        client = await get_ollama_client()
+        try:
+            async with client.stream(
+                "POST",
+                f"{OLLAMA_URL}/api/pull",
+                json={"name": req.model, "stream": True},
+                timeout=600.0,  # 10 min for large models
+            ) as resp:
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                        # Ollama pull sends: {"status": "...", "completed": N, "total": N}
+                        sse = {
+                            "status": chunk.get("status", ""),
+                            "completed": chunk.get("completed"),
+                            "total": chunk.get("total"),
+                            "done": chunk.get("status") == "success",
+                        }
+                        yield f"data: {json.dumps(sse)}\n\n"
+                        if chunk.get("status") == "success":
+                            break
+                    except Exception:
+                        continue
+        except httpx.ConnectError:
+            yield 'data: {"error": "Cannot connect to Ollama", "error_type": "connection"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        pull_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

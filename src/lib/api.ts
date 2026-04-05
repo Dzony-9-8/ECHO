@@ -149,6 +149,13 @@ const parseSSEStream = async (
 
       try {
         const parsed = JSON.parse(jsonStr);
+
+        // Handle error events emitted by the backend
+        if (parsed.error) {
+          const errType = (parsed.error_type as string) || "unknown";
+          throw Object.assign(new Error(parsed.error as string), { errorType: errType });
+        }
+
         if (parsed.type === "step" && onStep) {
           onStep({ agent: parsed.agent || "", text: parsed.text || "", status: parsed.status || "done" });
           continue;
@@ -158,10 +165,13 @@ const parseSSEStream = async (
           fullText += content;
           onDelta(fullText);
         }
-      } catch {
-        // Partial JSON, put back and wait
-        buffer = line + "\n" + buffer;
-        break;
+      } catch (e) {
+        if (e instanceof SyntaxError) {
+          // Partial JSON, put back and wait
+          buffer = line + "\n" + buffer;
+          break;
+        }
+        throw e; // Re-throw real errors (SSE error payloads)
       }
     }
   }
@@ -177,6 +187,13 @@ const parseSSEStream = async (
       if (jsonStr === "[DONE]") continue;
       try {
         const parsed = JSON.parse(jsonStr);
+
+        // Error events in flush section — re-throw so caller sees them
+        if (parsed.error) {
+          const errType = (parsed.error_type as string) || "unknown";
+          throw Object.assign(new Error(parsed.error as string), { errorType: errType });
+        }
+
         if (parsed.type === "step" && onStep) {
           onStep({ agent: parsed.agent || "", text: parsed.text || "", status: parsed.status || "done" });
           continue;
@@ -186,8 +203,9 @@ const parseSSEStream = async (
           fullText += content;
           onDelta(fullText);
         }
-      } catch {
-        /* ignore */
+      } catch (e) {
+        if (e instanceof SyntaxError) continue; // end-of-stream fragment, ignore
+        throw e;
       }
     }
   }
@@ -242,29 +260,59 @@ const sendLocalMessage = async (
   let enablePlanning = true;
   let enableReflection = false;
   let noCache = false;
+  let temperature = 0.7;
+  let maxTokens = 2048;
   try {
     const settings = JSON.parse(localStorage.getItem("echo_chat_settings") || "{}");
     enablePlanning = settings.enablePlanning ?? true;
     enableReflection = settings.enableReflection ?? false;
     noCache = settings.noCache ?? false;
+    temperature = settings.temperature ?? 0.7;
+    maxTokens = settings.maxTokens ?? 2048;
   } catch { /* use defaults */ }
 
   const url = getBackendUrl();
-  const response = await fetch(`${url}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
-      model: model || undefined,
-      enable_planning: enablePlanning,
-      enable_reflection: enableReflection,
-      no_cache: noCache,
-      ...(images && images.length > 0 ? { images } : {}),
-      ...(attachments && attachments.length > 0 ? { attachments } : {}),
-    }),
-  });
 
-  if (!response.ok) throw new Error(`Backend error: ${response.status}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120_000); // 2-minute ceiling
+
+  let response: Response;
+  try {
+    response = await fetch(`${url}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        model: model || undefined,
+        enable_planning: enablePlanning,
+        enable_reflection: enableReflection,
+        no_cache: noCache,
+        temperature,
+        max_tokens: maxTokens,
+        ...(images && images.length > 0 ? { images } : {}),
+        ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      }),
+      signal: controller.signal,
+    });
+  } catch (fetchErr: any) {
+    if (fetchErr?.name === "AbortError") {
+      throw new Error("Request timed out — Ollama may still be loading the model. Try again in a moment.");
+    }
+    throw fetchErr;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    let detail = `Backend error ${response.status}`;
+    try {
+      const body = await response.json();
+      detail = (body as { detail?: string; error?: string }).detail || (body as { detail?: string; error?: string }).error || detail;
+    } catch { /* ignore */ }
+    if (response.status === 404) detail = "Model not found — run `ollama pull <model>` to install it.";
+    if (response.status === 503) detail = "Ollama is not running — start it with `ollama serve`.";
+    throw new Error(detail);
+  }
 
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
     if (onChunk) {
