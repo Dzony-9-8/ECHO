@@ -17,6 +17,7 @@ const PluginManager = lazy(() => import("@/components/PluginManager"));
 const AutonomousMode = lazy(() => import("@/components/AutonomousMode"));
 const ProjectMode = lazy(() => import("@/components/ProjectMode"));
 const ModelCompareView = lazy(() => import("@/components/ModelCompareView"));
+const ModelfileEditor = lazy(() => import("@/components/ModelfileEditor"));
 
 const LazyFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -43,6 +44,7 @@ const Index = () => {
     autonomous: "Autonomous Mode",
     project: "Project Mode",
     compare: "Model Comparison",
+    modelfile: "Modelfile Editor",
   };
 
   const handlePromptSelect = (prompt: string) => {
@@ -71,6 +73,7 @@ const Index = () => {
           {activeView === "autonomous" && <AutonomousMode />}
           {activeView === "project" && <ProjectMode />}
           {activeView === "compare" && <ModelCompareView />}
+          {activeView === "modelfile" && <ModelfileEditor />}
         </Suspense>
       </main>
     </div>

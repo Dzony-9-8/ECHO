@@ -19,6 +19,7 @@ import {
   Bot,
   FolderOpen,
   Columns2,
+  FileCode2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
@@ -38,7 +39,8 @@ export type ViewType =
   | "plugins"
   | "autonomous"
   | "project"
-  | "compare";
+  | "compare"
+  | "modelfile";
 
 interface Props {
   activeView: ViewType;
@@ -67,6 +69,7 @@ const navItems: {
   { id: "autonomous", icon: Bot,        label: "Autonomous", color: "text-terminal-amber",   glow: "hsl(38 90% 55%)"  },
   { id: "project",    icon: FolderOpen, label: "Projects",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
   { id: "compare",    icon: Columns2,   label: "Compare",    color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "modelfile",  icon: FileCode2,  label: "Modelfile",  color: "text-primary",          glow: "hsl(142 70% 45%)" },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {

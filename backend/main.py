@@ -4374,6 +4374,51 @@ async def pull_model(req: PullModelRequest):
     )
 
 
+class ModelfileRequest(BaseModel):
+    name: str
+    modelfile: str
+
+
+@app.post("/api/models/create")
+async def create_model(req: ModelfileRequest):
+    """Stream Ollama model creation from a Modelfile as SSE."""
+    async def create_stream():
+        client = await get_ollama_client()
+        try:
+            async with client.stream(
+                "POST",
+                f"{OLLAMA_URL}/api/create",
+                json={"name": req.name, "modelfile": req.modelfile, "stream": True},
+                timeout=300.0,
+            ) as resp:
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                        sse = {
+                            "status": chunk.get("status", ""),
+                            "done": chunk.get("status") == "success",
+                        }
+                        yield f"data: {json.dumps(sse)}\n\n"
+                        if chunk.get("status") == "success":
+                            break
+                    except Exception:
+                        continue
+        except httpx.ConnectError:
+            yield 'data: {"error": "Cannot connect to Ollama", "error_type": "connection"}\n\n'
+        except Exception as e:
+            _logger.error(f"Model create error: {e}")
+            yield f'data: {{"error": "Create failed: {str(e)}"}}\n\n'
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        create_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Enhanced /api/models with VRAM estimation (Item 8)
 # ─────────────────────────────────────────────────────────────────────────────
