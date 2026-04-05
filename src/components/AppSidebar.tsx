@@ -18,6 +18,7 @@ import {
   Puzzle,
   Bot,
   FolderOpen,
+  Columns2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
@@ -36,7 +37,8 @@ export type ViewType =
   | "tools"
   | "plugins"
   | "autonomous"
-  | "project";
+  | "project"
+  | "compare";
 
 interface Props {
   activeView: ViewType;
@@ -64,6 +66,7 @@ const navItems: {
   { id: "plugins",    icon: Puzzle,   label: "Plugins",    color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
   { id: "autonomous", icon: Bot,        label: "Autonomous", color: "text-terminal-amber",   glow: "hsl(38 90% 55%)"  },
   { id: "project",    icon: FolderOpen, label: "Projects",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "compare",    icon: Columns2,   label: "Compare",    color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {

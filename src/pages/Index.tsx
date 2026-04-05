@@ -16,6 +16,7 @@ const ToolsPanel = lazy(() => import("@/components/ToolsPanel"));
 const PluginManager = lazy(() => import("@/components/PluginManager"));
 const AutonomousMode = lazy(() => import("@/components/AutonomousMode"));
 const ProjectMode = lazy(() => import("@/components/ProjectMode"));
+const ModelCompareView = lazy(() => import("@/components/ModelCompareView"));
 
 const LazyFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -41,6 +42,7 @@ const Index = () => {
     plugins: "Plugin Manager",
     autonomous: "Autonomous Mode",
     project: "Project Mode",
+    compare: "Model Comparison",
   };
 
   const handlePromptSelect = (prompt: string) => {
@@ -68,6 +70,7 @@ const Index = () => {
           {activeView === "plugins" && <PluginManager />}
           {activeView === "autonomous" && <AutonomousMode />}
           {activeView === "project" && <ProjectMode />}
+          {activeView === "compare" && <ModelCompareView />}
         </Suspense>
       </main>
     </div>
