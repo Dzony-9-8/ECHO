@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { getBackendUrl } from "@/lib/api";
 import { toast } from "sonner";
 
-const DEFAULT_MODELFILE = `FROM llama3.1:8b
+const DEFAULT_MODELFILE = `FROM llama3.2:3b
 
 # Set the system prompt for this persona
 SYSTEM """You are a helpful assistant."""
@@ -126,7 +126,7 @@ export default function ModelfileEditor() {
       <Textarea
         value={modelfile}
         onChange={(e) => setModelfile(e.target.value)}
-        rows={16}
+        rows={14}
         spellCheck={false}
         className="font-mono text-sm resize-none flex-1 min-h-[280px]"
         placeholder="Paste or write your Modelfile here…"

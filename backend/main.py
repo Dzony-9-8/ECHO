@@ -4409,7 +4409,7 @@ async def create_model(req: ModelfileRequest):
             yield 'data: {"error": "Cannot connect to Ollama", "error_type": "connection"}\n\n'
         except Exception as e:
             _logger.error(f"Model create error: {e}")
-            yield f'data: {{"error": "Create failed: {str(e)}"}}\n\n'
+            yield f"data: {json.dumps({'error': f'Create failed: {str(e)}'})}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
