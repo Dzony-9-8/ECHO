@@ -2643,7 +2643,14 @@ async def ollama_stream(
                 error_body = await response.aread()
                 error_msg = error_body.decode("utf-8", errors="replace")
                 _logger.error(f"Ollama stream error {response.status_code}: {error_msg}")
-                yield f'data: {{"error": "Ollama error {response.status_code}: {error_msg}"}}\n\n'
+                status_code = response.status_code
+                if status_code == 404:
+                    err_payload = '{"error": "Model not found in Ollama. Run: ollama pull <model>", "error_type": "model_missing"}'
+                elif status_code == 503:
+                    err_payload = '{"error": "Ollama is not running. Start it with: ollama serve", "error_type": "connection"}'
+                else:
+                    err_payload = f'{{"error": "Ollama returned HTTP {status_code}", "error_type": "http_error"}}'
+                yield f'data: {err_payload}\n\n'
                 yield "data: [DONE]\n\n"
                 return
 
