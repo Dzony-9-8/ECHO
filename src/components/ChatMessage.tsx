@@ -388,8 +388,9 @@ const ChatMessage = ({
 export default memo(
   ChatMessage,
   (prev, next) =>
-    prev.message.id      === next.message.id &&
-    prev.message.content === next.message.content &&
-    prev.message.status  === next.message.status &&
-    prev.steps           === next.steps,
+    prev.message.id          === next.message.id &&
+    prev.message.content     === next.message.content &&
+    prev.message.status      === next.message.status &&
+    prev.message.weatherData === next.message.weatherData &&
+    prev.steps               === next.steps,
 );
