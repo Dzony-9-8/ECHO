@@ -114,17 +114,17 @@ def kill_port(port: int):
 
 def ensure_frontend():
     """Build the frontend if dist/ is missing, then copy into backend/dist/."""
-    # Check if we already have a fresh backend/dist/
-    if BACKEND_DIST.exists() and (BACKEND_DIST / "index.html").exists():
-        print("  Frontend already present in backend/dist/")
-        return True
-
-    # Try copying from project-root dist/ (from a previous npm run build)
+    # If project-root dist/ exists and is newer than backend/dist/, always sync it
     if DIST_DIR.exists() and (DIST_DIR / "index.html").exists():
-        print("  Copying existing dist/ -> backend/dist/")
-        if BACKEND_DIST.exists():
-            shutil.rmtree(BACKEND_DIST)
-        shutil.copytree(DIST_DIR, BACKEND_DIST)
+        src_mtime = (DIST_DIR / "index.html").stat().st_mtime
+        dst_mtime = (BACKEND_DIST / "index.html").stat().st_mtime if (BACKEND_DIST / "index.html").exists() else 0
+        if src_mtime > dst_mtime:
+            print("  Syncing updated dist/ -> backend/dist/")
+            if BACKEND_DIST.exists():
+                shutil.rmtree(BACKEND_DIST)
+            shutil.copytree(DIST_DIR, BACKEND_DIST)
+        else:
+            print("  Frontend already up-to-date in backend/dist/")
         return True
 
     # Need to build
