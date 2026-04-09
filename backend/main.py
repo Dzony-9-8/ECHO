@@ -5285,26 +5285,26 @@ async def wikipedia_tool(request: WikipediaRequest):
 @app.get("/api/skills/scan-claude")
 async def scan_claude_skills():
     """Scan the Claude Code skills directory and return open-source skill files."""
-    import platform
-    # Resolve platform-appropriate Claude skills path
-    if platform.system() == "Windows":
-        base = pathlib.Path.home() / ".claude" / "skills"
-    else:
-        base = pathlib.Path.home() / ".claude" / "skills"
+    base = pathlib.Path.home() / ".claude" / "skills"
 
     if not base.exists():
         return {"skills": [], "directory": str(base), "exists": False}
 
     skills = []
-    # Scan both flat .md files and folder-based skills (SKILL.md inside)
-    for entry in sorted(base.iterdir()):
+    try:
+        entries = sorted(base.iterdir(), key=lambda p: p.name.lower())
+    except Exception as e:
+        return {"skills": [], "directory": str(base), "exists": True, "error": str(e)}
+
+    for entry in entries:
         try:
-            if entry.is_dir() and not entry.name.startswith("."):
-                # Folder-based skill: look for SKILL.md or skill.md
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
                 for candidate in ("SKILL.md", "skill.md", "README.md"):
                     skill_file = entry / candidate
                     if skill_file.exists():
-                        content = skill_file.read_text(encoding="utf-8")
+                        content = skill_file.read_text(encoding="utf-8", errors="replace")
                         skills.append({
                             "name": entry.name,
                             "content": content,
@@ -5312,8 +5312,8 @@ async def scan_claude_skills():
                             "type": "folder",
                         })
                         break
-            elif entry.is_file() and entry.suffix == ".md" and entry.name != "MEMORY.md":
-                content = entry.read_text(encoding="utf-8")
+            elif entry.is_file() and entry.suffix == ".md" and entry.name not in ("MEMORY.md",):
+                content = entry.read_text(encoding="utf-8", errors="replace")
                 skills.append({
                     "name": entry.stem,
                     "content": content,
