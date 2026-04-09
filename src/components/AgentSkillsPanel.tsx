@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   getAllSkills,
   saveSkill,
@@ -31,7 +31,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
-import { getBackendMode, getBackendUrl } from "@/lib/api";
+import { getBackendUrl } from "@/lib/api";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import SkillCreator from "@/components/SkillCreator";
 import SkillEvals from "@/components/SkillEvals";
@@ -55,6 +55,7 @@ const AgentSkillsPanel = () => {
   const [newAgent, setNewAgent] = useState<string>("auto");
   const [syncingClaude, setSyncingClaude] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const autoSyncedRef = useRef(false);
 
   const refresh = useCallback(() => setSkills(getAllSkills()), []);
 
@@ -153,6 +154,16 @@ const AgentSkillsPanel = () => {
     finally { setSyncingClaude(false); }
   };
 
+  // Auto-sync from ~/.claude/skills/ on first mount if panel is empty
+  useEffect(() => {
+    if (autoSyncedRef.current) return;
+    autoSyncedRef.current = true;
+    if (getAllSkills().length === 0) {
+      handleSyncClaudeSkills();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleToggle = (id: string, enabled: boolean) => { updateSkill(id, { enabled: !enabled }); refresh(); };
   const handleDelete = (id: string, name: string) => { deleteSkill(id); refresh(); toast.success(`Deleted "${name}"`); };
   const handleUpdateContent = (id: string, content: string) => { updateSkill(id, { content }); setEditingId(null); refresh(); };
@@ -188,24 +199,20 @@ const AgentSkillsPanel = () => {
         <TabsContent value="skills" className="flex-1 overflow-y-auto">
           <div className="p-3 space-y-2">
             <div className="flex items-center gap-1 justify-end">
-              {getBackendMode() === "local" && (
-                <>
-                  <button
-                    onClick={handleSyncClaudeSkills}
-                    disabled={syncingClaude}
-                    className="flex items-center gap-1 px-2 py-1 rounded border border-primary/40 text-[9px] font-mono text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
-                    title="Sync open-source skills from ~/.claude/skills/"
-                  >
-                    {syncingClaude
-                      ? <RefreshCw className="w-3 h-3 animate-spin" />
-                      : <Download className="w-3 h-3" />}
-                    Sync Claude Code
-                  </button>
-                  <button onClick={handleScanLocalSkills} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Scan local skills/ directory">
-                    <FolderSearch className="w-3.5 h-3.5" />
-                  </button>
-                </>
-              )}
+              <button
+                onClick={handleSyncClaudeSkills}
+                disabled={syncingClaude}
+                className="flex items-center gap-1 px-2 py-1 rounded border border-primary/40 text-[9px] font-mono text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
+                title="Sync open-source skills from ~/.claude/skills/"
+              >
+                {syncingClaude
+                  ? <RefreshCw className="w-3 h-3 animate-spin" />
+                  : <Download className="w-3 h-3" />}
+                Sync Claude Code
+              </button>
+              <button onClick={handleScanLocalSkills} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Scan local skills/ directory">
+                <FolderSearch className="w-3.5 h-3.5" />
+              </button>
               <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Import .md skill files">
                 <Upload className="w-3.5 h-3.5" />
               </button>
@@ -242,12 +249,10 @@ const AgentSkillsPanel = () => {
                   <p className="text-[10px]">Sync open-source skills from Claude Code, import files, or create custom skills</p>
                 </div>
                 <div className="flex flex-wrap items-center justify-center gap-2">
-                  {getBackendMode() === "local" && (
-                    <button onClick={handleSyncClaudeSkills} disabled={syncingClaude} className="px-3 py-1.5 text-[10px] font-mono bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors flex items-center gap-1.5 disabled:opacity-40">
-                      {syncingClaude ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                      Sync Claude Code
-                    </button>
-                  )}
+                  <button onClick={handleSyncClaudeSkills} disabled={syncingClaude} className="px-3 py-1.5 text-[10px] font-mono bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors flex items-center gap-1.5 disabled:opacity-40">
+                    {syncingClaude ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                    Sync Claude Code
+                  </button>
                   <button onClick={() => fileInputRef.current?.click()} className="px-3 py-1.5 text-[10px] font-mono border border-border text-foreground rounded hover:bg-muted transition-colors flex items-center gap-1.5">
                     <Upload className="w-3 h-3" /> Import Files
                   </button>
