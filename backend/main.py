@@ -5285,16 +5285,21 @@ async def wikipedia_tool(request: WikipediaRequest):
 @app.get("/api/skills/scan-claude")
 async def scan_claude_skills():
     """Scan the Claude Code skills directory and return open-source skill files."""
+    import json as _json
+    from fastapi.responses import Response as _Response
+
     base = pathlib.Path.home() / ".claude" / "skills"
 
     if not base.exists():
-        return {"skills": [], "directory": str(base), "exists": False}
+        payload = {"skills": [], "directory": str(base), "exists": False}
+        return _Response(content=_json.dumps(payload), media_type="application/json")
 
     skills = []
     try:
         entries = sorted(base.iterdir(), key=lambda p: p.name.lower())
     except Exception as e:
-        return {"skills": [], "directory": str(base), "exists": True, "error": str(e)}
+        payload = {"skills": [], "directory": str(base), "exists": True, "error": str(e)}
+        return _Response(content=_json.dumps(payload), media_type="application/json")
 
     for entry in entries:
         try:
@@ -5323,7 +5328,13 @@ async def scan_claude_skills():
         except Exception:
             continue
 
-    return {"skills": skills, "directory": str(base), "exists": True, "count": len(skills)}
+    payload = {"skills": skills, "directory": str(base), "exists": True, "count": len(skills)}
+    try:
+        body = _json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        # Fallback: ascii-safe encoding
+        body = _json.dumps(payload, ensure_ascii=True)
+    return _Response(content=body, media_type="application/json")
 
 
 # ── v3.8: Session analytics endpoint ─────────────────────────────────────────
