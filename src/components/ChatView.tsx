@@ -55,8 +55,6 @@ const ChatView = () => {
     new Set(["Planner", "Supervisor", "Developer", "Researcher", "Critic"])
   );
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const rafRef = useRef<number | null>(null);
-  const pendingChunkRef = useRef<string>("");
 
   const {
     conversations,
@@ -346,17 +344,10 @@ const ChatView = () => {
       const response = await sendMessage(
         allForBackend,
         (chunk) => {
-          // RAF debounce: only re-render once per animation frame, not per SSE chunk
-          pendingChunkRef.current = chunk;
-          if (!rafRef.current) {
-            rafRef.current = requestAnimationFrame(() => {
-              const latest = pendingChunkRef.current;
-              setMessages((prev) =>
-                prev.map((m) => (m.id === msgId ? { ...m, content: latest } : m))
-              );
-              rafRef.current = null;
-            });
-          }
+          // Direct update per token — no batching, gives letter-by-letter streaming
+          setMessages((prev) =>
+            prev.map((m) => (m.id === msgId ? { ...m, content: chunk } : m))
+          );
         },
         depth ?? 1,
         model,

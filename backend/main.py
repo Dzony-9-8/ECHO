@@ -396,7 +396,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ECHO Local Backend", version="3.3.0", lifespan=lifespan)
 
-app.add_middleware(GZipMiddleware, minimum_size=1024)  # Compress responses > 1KB
+# GZip disabled — it buffers SSE streams and kills real-time token delivery
+# app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
