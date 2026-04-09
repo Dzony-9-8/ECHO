@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Mic, MicOff, Paperclip, X, FileText, Layers, Image as ImageIcon, Wand2 } from "lucide-react";
+import { Send, Mic, MicOff, Paperclip, X, FileText, Layers, Image as ImageIcon, Wand2, PhoneCall } from "lucide-react";
 import {
   type FileAttachment,
   getFileType,
@@ -9,7 +9,7 @@ import {
   ACCEPT_STRING,
   getFileIcon,
 } from "@/lib/files";
-import { sendMessage } from "@/lib/api";
+import { sendMessage, getBackendUrl } from "@/lib/api";
 import ModelSelector, { getSelectedModel } from "./ModelSelector";
 import PromptTemplates from "./PromptTemplates";
 import SlashCommandMenu, { type SlashCommand } from "./SlashCommandMenu";
@@ -33,12 +33,15 @@ const ChatInput = ({ onSend, disabled }: Props) => {
   const [depth, setDepth] = useState(1);
   const [model, setModel] = useState(getSelectedModel);
   const [isListening, setIsListening] = useState(false);
+  const [isIntercomActive, setIsIntercomActive] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   const speechSupported = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 
@@ -85,6 +88,94 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     recognition.start();
     setIsListening(true);
   }, [isListening, speechSupported]);
+
+  const toggleIntercom = useCallback(async () => {
+    if (isIntercomActive) {
+      if (recognitionRef.current) recognitionRef.current.stop();
+      socketRef.current?.close();
+      setIsIntercomActive(false);
+      return;
+    }
+    if (!speechSupported) {
+        console.error("Transcriber needs WebKitSpeechRecognition support");
+        return;
+    }
+    try {
+      const wsUrl = getBackendUrl().replace("http", "ws") + "/api/voice/stream";
+      const ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => {
+        setIsIntercomActive(true);
+        // Using native VAD + STT layer instead of raw mic chunking
+        const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        const recognition = new SpeechRecognitionCtor();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
+        
+        recognition.onresult = (event: any) => {
+          let interim = "";
+          let newFinal = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              newFinal += event.results[i][0].transcript + " ";
+            } else {
+              interim += event.results[i][0].transcript;
+            }
+          }
+          
+          if (newFinal.trim().length > 0 && ws.readyState === WebSocket.OPEN) {
+             ws.send(JSON.stringify({ text: newFinal.trim() }));
+          }
+
+          setInput((prev) => {
+            const base = prev.replace(/\u200B.*$/, "").trimEnd();
+            return (base ? base + " " : "") + newFinal + (interim ? "\u200B" + interim : "");
+          });
+        };
+
+        recognition.onerror = () => {};
+        recognition.onend = () => {
+           // Auto-restart if we haven't manually hung up!
+           if (socketRef.current === ws) {
+              try { recognition.start(); } catch (e) {}
+           }
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+      };
+
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          // Play TTS audio sent back by fish-speech via WebSocket
+          if (data.type === "tts_audio" && data.audio_b64) {
+            const raw = atob(data.audio_b64);
+            const buf = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+            const blob = new Blob([buf], { type: "audio/wav" });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.onended = () => URL.revokeObjectURL(url);
+            audio.play().catch(() => {});
+          }
+        } catch {
+          // non-JSON frame — ignore
+        }
+      };
+
+      ws.onclose = () => {
+        setIsIntercomActive(false);
+        if (recognitionRef.current) recognitionRef.current.stop();
+        setInput((prev) => prev.replace(/\u200B/g, ""));
+      };
+      
+      socketRef.current = ws;
+    } catch (e) {
+      console.error("PersonaPlex Intercom failed", e);
+    }
+  }, [isIntercomActive, speechSupported]);
 
   // Auto-save draft
   useEffect(() => {
@@ -394,17 +485,29 @@ const ChatInput = ({ onSend, disabled }: Props) => {
         {speechSupported && (
           <button
             onClick={toggleVoice}
-            disabled={disabled}
+            disabled={disabled || isIntercomActive}
             className={`p-2.5 rounded border transition-colors ${
               isListening
                 ? "border-terminal-red bg-terminal-red/20 text-terminal-red animate-pulse"
                 : "border-terminal-cyan bg-terminal-cyan/10 text-terminal-cyan hover:bg-terminal-cyan/20"
             } disabled:opacity-30`}
-            title={isListening ? "Stop listening" : "Voice input"}
+            title={isListening ? "Stop listening" : "Voice dictation"}
           >
             {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
         )}
+        <button
+          onClick={toggleIntercom}
+          disabled={disabled || isListening}
+          className={`p-2.5 rounded border transition-all ${
+            isIntercomActive
+              ? "border-terminal-magenta bg-terminal-magenta/20 text-terminal-magenta animate-pulse shadow-[0_0_15px_rgba(255,0,255,0.4)]"
+              : "border-terminal-magenta/50 bg-terminal-magenta/5 text-terminal-magenta hover:bg-terminal-magenta/20"
+          } disabled:opacity-30`}
+          title={isIntercomActive ? "End PersonaPlex Call" : "PersonaPlex Intercom Call"}
+        >
+          <PhoneCall className="w-4 h-4" />
+        </button>
       </div>
     </div>
   );

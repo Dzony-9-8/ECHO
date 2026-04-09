@@ -27,6 +27,8 @@ import {
   FlaskConical,
   Target,
   FolderSearch,
+  Download,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getBackendMode, getBackendUrl } from "@/lib/api";
@@ -51,6 +53,7 @@ const AgentSkillsPanel = () => {
   const [newName, setNewName] = useState("");
   const [newContent, setNewContent] = useState("");
   const [newAgent, setNewAgent] = useState<string>("auto");
+  const [syncingClaude, setSyncingClaude] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(() => setSkills(getAllSkills()), []);
@@ -122,6 +125,34 @@ const AgentSkillsPanel = () => {
     } catch { toast.error("Cannot connect to local backend"); }
   };
 
+  const handleSyncClaudeSkills = async () => {
+    const url = getBackendUrl();
+    setSyncingClaude(true);
+    try {
+      const resp = await fetch(`${url}/api/skills/scan-claude`);
+      if (!resp.ok) { toast.error("Failed to scan Claude Code skills"); return; }
+      const data = await resp.json();
+      if (!data.exists) { toast.error(`Claude skills directory not found: ${data.directory}`); return; }
+      if (data.skills.length === 0) { toast.info("No open-source skills found in ~/.claude/skills/"); return; }
+      let imported = 0;
+      let skipped = 0;
+      const existing = getAllSkills();
+      for (const skill of data.skills) {
+        const alreadyExists = existing.some((s) => s.name === skill.name && s.source?.startsWith("claude:"));
+        if (alreadyExists) { skipped++; continue; }
+        const assignedAgent = detectAgentFromSkill(skill.name, skill.content);
+        saveSkill({ name: skill.name, content: skill.content, agent: assignedAgent, enabled: true, source: `claude:${skill.folder}` });
+        imported++;
+      }
+      const msg = skipped > 0
+        ? `Synced ${imported} new skill(s) from Claude Code (${skipped} already imported)`
+        : `Synced ${imported} skill(s) from Claude Code`;
+      toast.success(msg);
+      refresh();
+    } catch { toast.error("Cannot connect to local backend"); }
+    finally { setSyncingClaude(false); }
+  };
+
   const handleToggle = (id: string, enabled: boolean) => { updateSkill(id, { enabled: !enabled }); refresh(); };
   const handleDelete = (id: string, name: string) => { deleteSkill(id); refresh(); toast.success(`Deleted "${name}"`); };
   const handleUpdateContent = (id: string, content: string) => { updateSkill(id, { content }); setEditingId(null); refresh(); };
@@ -158,9 +189,22 @@ const AgentSkillsPanel = () => {
           <div className="p-3 space-y-2">
             <div className="flex items-center gap-1 justify-end">
               {getBackendMode() === "local" && (
-                <button onClick={handleScanLocalSkills} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Scan local skills/ directory">
-                  <FolderSearch className="w-3.5 h-3.5" />
-                </button>
+                <>
+                  <button
+                    onClick={handleSyncClaudeSkills}
+                    disabled={syncingClaude}
+                    className="flex items-center gap-1 px-2 py-1 rounded border border-primary/40 text-[9px] font-mono text-primary hover:bg-primary/10 transition-colors disabled:opacity-40"
+                    title="Sync open-source skills from ~/.claude/skills/"
+                  >
+                    {syncingClaude
+                      ? <RefreshCw className="w-3 h-3 animate-spin" />
+                      : <Download className="w-3 h-3" />}
+                    Sync Claude Code
+                  </button>
+                  <button onClick={handleScanLocalSkills} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Scan local skills/ directory">
+                    <FolderSearch className="w-3.5 h-3.5" />
+                  </button>
+                </>
               )}
               <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" title="Import .md skill files">
                 <Upload className="w-3.5 h-3.5" />
@@ -195,13 +239,19 @@ const AgentSkillsPanel = () => {
                 <FileText className="w-8 h-8 text-muted-foreground mx-auto" />
                 <div className="text-xs text-muted-foreground font-mono space-y-1">
                   <p>No skills loaded yet</p>
-                  <p className="text-[10px]">Import Claude Code <code>.md</code> skill files or create custom skills</p>
+                  <p className="text-[10px]">Sync open-source skills from Claude Code, import files, or create custom skills</p>
                 </div>
-                <div className="flex items-center justify-center gap-2">
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  {getBackendMode() === "local" && (
+                    <button onClick={handleSyncClaudeSkills} disabled={syncingClaude} className="px-3 py-1.5 text-[10px] font-mono bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors flex items-center gap-1.5 disabled:opacity-40">
+                      {syncingClaude ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                      Sync Claude Code
+                    </button>
+                  )}
                   <button onClick={() => fileInputRef.current?.click()} className="px-3 py-1.5 text-[10px] font-mono border border-border text-foreground rounded hover:bg-muted transition-colors flex items-center gap-1.5">
                     <Upload className="w-3 h-3" /> Import Files
                   </button>
-                  <button onClick={() => setShowNew(true)} className="px-3 py-1.5 text-[10px] font-mono bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors flex items-center gap-1.5">
+                  <button onClick={() => setShowNew(true)} className="px-3 py-1.5 text-[10px] font-mono border border-border text-foreground rounded hover:bg-muted transition-colors flex items-center gap-1.5">
                     <Plus className="w-3 h-3" /> Create Skill
                   </button>
                 </div>

@@ -375,6 +375,8 @@ const ChatView = () => {
                   text: stepEvent.text,
                   status: "running" as const,
                   startTime: now,
+                  phase: stepEvent.phase,
+                  detail: stepEvent.detail,
                 },
               ]);
             } else {
@@ -382,7 +384,7 @@ const ChatView = () => {
               const updated = [...existing];
               for (let i = updated.length - 1; i >= 0; i--) {
                 if (updated[i].agent === stepEvent.agent && updated[i].status === "running") {
-                  updated[i] = { ...updated[i], status: "done" as const, endTime: now };
+                  updated[i] = { ...updated[i], status: "done" as const, endTime: now, detail: stepEvent.detail ?? updated[i].detail };
                   break;
                 }
               }
@@ -395,6 +397,29 @@ const ChatView = () => {
           setMessages((prev) =>
             prev.map((m) => m.id === msgId ? { ...m, weatherData } : m)
           );
+        },
+        (agent: string, token: string) => {
+          // Append the token to the text of the currently "running" step for this agent
+          setMessageSteps((prev) => {
+            const existing = prev.get(msgId) ?? [];
+            const updated = [...existing];
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if (updated[i].agent === agent && updated[i].status === "running") {
+                // If it's a completely new streaming token and the initial text is just the short task title
+                // we might want to append it. However, the exact behavior Claude Code has is to stream the text entirely.
+                // Since the initial step event has `text: st.task[:60]`, we can append to it. 
+                // But it's better to clear it when the first token arrives so the LLM text replaces the generic title.
+                // Let's check a hack flag on the step object, but to keep it simple, we just append.
+                if (!updated[i].text.includes("\n") && token.includes("\n")) {
+                   updated[i] = { ...updated[i], text: updated[i].text + token };
+                } else {
+                   updated[i] = { ...updated[i], text: updated[i].text + token };
+                }
+                break;
+              }
+            }
+            return new Map(prev).set(msgId, updated);
+          });
         }
       );
 

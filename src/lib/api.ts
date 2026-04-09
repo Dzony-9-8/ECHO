@@ -26,6 +26,8 @@ export interface ChatStepEvent {
   agent: string;
   text: string;
   status: "start" | "done" | "error";
+  phase?: string;   // CoT phase: THINKING | ANALYZING | PLANNING | EXECUTING | VERIFYING | FINALIZING
+  detail?: string;  // Substep detail text
 }
 
 export interface ChatMessage {
@@ -123,7 +125,8 @@ const parseSSEStream = async (
   response: Response,
   onDelta: (text: string) => void,
   onStep?: (step: ChatStepEvent) => void,
-  onWeatherData?: (data: WeatherData) => void
+  onWeatherData?: (data: WeatherData) => void,
+  onThoughtToken?: (agent: string, token: string) => void
 ): Promise<string> => {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("No response body");
@@ -159,7 +162,11 @@ const parseSSEStream = async (
         }
 
         if (parsed.type === "step" && onStep) {
-          onStep({ agent: parsed.agent || "", text: parsed.text || "", status: parsed.status || "done" });
+          onStep({ agent: parsed.agent || "", text: parsed.text || "", status: parsed.status || "done", phase: parsed.phase, detail: parsed.detail });
+          continue;
+        }
+        if (parsed.type === "thought_token" && onThoughtToken) {
+          onThoughtToken(parsed.agent || "", parsed.token || "");
           continue;
         }
         if (parsed.type === "weather_data" && onWeatherData) {
@@ -265,7 +272,8 @@ const sendLocalMessage = async (
   images?: string[],
   onStep?: (step: ChatStepEvent) => void,
   attachments?: Array<{ name: string; type: string; content: string }>,
-  onWeatherData?: (data: WeatherData) => void
+  onWeatherData?: (data: WeatherData) => void,
+  onThoughtToken?: (agent: string, token: string) => void
 ): Promise<string> => {
   // Load pipeline settings from localStorage
   let enablePlanning = true;
@@ -327,10 +335,10 @@ const sendLocalMessage = async (
 
   if (response.headers.get("content-type")?.includes("text/event-stream")) {
     if (onChunk) {
-      return parseSSEStream(response, onChunk, onStep, onWeatherData);
+      return parseSSEStream(response, onChunk, onStep, onWeatherData, onThoughtToken);
     }
     // No streaming callback — collect full text from SSE
-    return parseSSEStream(response, () => {}, onStep, onWeatherData);
+    return parseSSEStream(response, () => {}, onStep, onWeatherData, onThoughtToken);
   }
 
   const data = await response.json();
@@ -346,12 +354,13 @@ export const sendMessage = async (
   images?: string[],
   onStep?: (step: ChatStepEvent) => void,
   attachments?: Array<{ name: string; type: string; content: string }>,
-  onWeatherData?: (data: WeatherData) => void
+  onWeatherData?: (data: WeatherData) => void,
+  onThoughtToken?: (agent: string, token: string) => void
 ): Promise<string> => {
   const mode = getBackendMode();
 
   if (mode === "local") {
-    return sendLocalMessage(messages, onChunk, model, images, onStep, attachments, onWeatherData);
+    return sendLocalMessage(messages, onChunk, model, images, onStep, attachments, onWeatherData, onThoughtToken);
   }
 
   return sendCloudMessage(messages, depth, onChunk, model);
@@ -552,6 +561,8 @@ export const fetchLocalModels = async (): Promise<LocalModel[]> => {
 export interface TelemetryData {
   uptime: number;
   vram: { used_mb: number; total_mb: number; percent: number };
+  cpu?: { percent: number };
+  ram?: { used_mb: number; total_mb: number; percent: number };
   cache: {
     entries: number;
     max_size: number;
@@ -569,6 +580,8 @@ export interface TelemetryData {
   }[];
   pipeline_queue: number;
   models_loaded: string[];
+  model_throughput?: { name: string; size_mb: number; vram_mb: number; expires_at: string }[];
+  memory_stats?: { entries: number; last_compaction: string };
 }
 
 export const fetchTelemetry = async (): Promise<TelemetryData | null> => {

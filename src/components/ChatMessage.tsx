@@ -94,16 +94,37 @@ const ChatMessage = ({
     if (speaking) return;
     setSpeaking(true);
     try {
-      await fetch(`${getBackendUrl()}/api/voice/speak`, {
+      const resp = await fetch(`${getBackendUrl()}/api/voice/speak`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: message.content.slice(0, 2000) }),
       });
+      if (resp.ok) {
+        const data = await resp.json();
+        // Fish Speech returns audio_b64 — play it in the browser
+        if (data.audio_b64) {
+          const raw = atob(data.audio_b64);
+          const buf = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+          const blob = new Blob([buf], { type: "audio/wav" });
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            setSpeaking(false);
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            setSpeaking(false);
+          };
+          await audio.play();
+          return; // setSpeaking(false) handled by onended
+        }
+      }
     } catch {
       // TTS not available — ignore silently
-    } finally {
-      setTimeout(() => setSpeaking(false), 1500);
     }
+    setTimeout(() => setSpeaking(false), 1500);
   };
 
   const tokenCount = useMemo(() => estimateTokens(message.content), [message.content]);
