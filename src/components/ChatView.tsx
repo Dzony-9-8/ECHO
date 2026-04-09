@@ -399,22 +399,13 @@ const ChatView = () => {
           );
         },
         (agent: string, token: string) => {
-          // Append the token to the text of the currently "running" step for this agent
+          // Stream tokens into thoughtText (separate from the step label)
           setMessageSteps((prev) => {
             const existing = prev.get(msgId) ?? [];
             const updated = [...existing];
             for (let i = updated.length - 1; i >= 0; i--) {
               if (updated[i].agent === agent && updated[i].status === "running") {
-                // If it's a completely new streaming token and the initial text is just the short task title
-                // we might want to append it. However, the exact behavior Claude Code has is to stream the text entirely.
-                // Since the initial step event has `text: st.task[:60]`, we can append to it. 
-                // But it's better to clear it when the first token arrives so the LLM text replaces the generic title.
-                // Let's check a hack flag on the step object, but to keep it simple, we just append.
-                if (!updated[i].text.includes("\n") && token.includes("\n")) {
-                   updated[i] = { ...updated[i], text: updated[i].text + token };
-                } else {
-                   updated[i] = { ...updated[i], text: updated[i].text + token };
-                }
+                updated[i] = { ...updated[i], thoughtText: (updated[i].thoughtText ?? "") + token };
                 break;
               }
             }

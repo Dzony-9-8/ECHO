@@ -5,12 +5,13 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 export interface Step {
   id: string;
   agent: string;
-  text: string;
+  text: string;          // Short label (task title)
+  thoughtText?: string;  // Live-streamed LLM tokens from this agent
   status: "running" | "done" | "error";
   startTime: number;
   endTime?: number;
-  phase?: string;       // CoT phase: THINKING | ANALYZING | PLANNING | EXECUTING | VERIFYING | FINALIZING
-  detail?: string;      // Optional substep/detail text
+  phase?: string;        // CoT phase: THINKING | ANALYZING | PLANNING | EXECUTING | VERIFYING | FINALIZING
+  detail?: string;       // Summary line shown after completion
 }
 
 interface Props {
@@ -200,9 +201,17 @@ const ThinkingSteps = ({ steps, isStreaming }: Props) => {
                         )}
                       </div>
 
-                      {/* Substep detail line (└─ style) */}
-                      {step.detail && (
-                        <div className="flex items-start gap-1.5 pl-5 text-muted-foreground/60">
+                      {/* Live token stream — shown while agent is running */}
+                      {step.status === "running" && step.thoughtText && (
+                        <div className="mt-1 ml-5 pl-2 border-l border-border/30 text-[9px] text-muted-foreground/70 font-mono whitespace-pre-wrap break-words max-h-24 overflow-y-auto leading-relaxed">
+                          {step.thoughtText}
+                          <span className="inline-block w-1 h-2.5 bg-primary/60 ml-0.5 align-middle" style={{ animation: "pulse 0.8s ease-in-out infinite" }} />
+                        </div>
+                      )}
+
+                      {/* Summary detail line after done */}
+                      {step.status === "done" && step.detail && (
+                        <div className="flex items-start gap-1.5 pl-5 text-muted-foreground/50">
                           <span className="flex-shrink-0 text-muted-foreground/30">└─</span>
                           <span className="break-words">{step.detail}</span>
                         </div>

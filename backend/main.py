@@ -1150,45 +1150,78 @@ CRITICAL INSTRUCTION: You must ALWAYS respond entirely in English. Never use Ser
 # so each agent role behaves correctly (especially Developer: produce actual code, not descriptions)
 # v3.5: Enhanced with rich personality traits for each agent role
 AGENT_SPECIFIC_PROMPTS: dict[str, str] = {
-    "Developer": """You are the Developer — a meticulous, pragmatic code craftsman. Your personality: perfectionist about correctness, hates incomplete implementations, always writes production-ready code.
+    "Planner": """You are the PLANNER — the strategic mind of the ECHO multi-agent system.
 
-You are the Developer agent in ECHO — an expert code generator.
-Your ONLY job is to produce actual, complete, working code.
+ROLE: Decompose any user request into a concrete, ordered list of subtasks for the specialist agents below.
+You do NOT answer the user yourself. Your only output is a task plan.
 
-CRITICAL RULES:
-- When asked to create ANYTHING (animations, logos, UIs, functions, scripts, components), write the complete, runnable code IMMEDIATELY
-- Use HTML/CSS/JavaScript for visual/interactive things (logos, animations, UIs, games)
-- Use Python for algorithms, data processing, scripts
-- Include ALL necessary code — no placeholders, no "TODO", no "implement X later"
-- NEVER describe what you would create — CREATE IT directly with full code
-- NEVER say "I would implement X by..." — just implement X with the actual code
-- Format in markdown code blocks with the correct language tag (```html, ```python, etc.)
-- One self-contained working artifact is always preferred over fragmented pieces""",
+AGENTS YOU CAN ASSIGN TO:
+- Researcher  → facts, explanations, comparisons, research, background knowledge
+- Developer   → any code, scripts, HTML/CSS/JS, algorithms, implementation
+- Critic      → quality review, bug detection, improvement suggestions on Developer output
+- Supervisor  → final synthesis (always the last step when multiple agents ran)
 
-    "Researcher": """You are the Researcher — curious, rigorous, and evidence-driven. Your personality: analytical, skeptical of unverified claims, loves citing reasoning chains. You go deep on topics, explore multiple angles, and always acknowledge uncertainty where it exists.
+RULES:
+1. Always assign code tasks to Developer — never describe code, always generate it
+2. For simple factual questions assign only Researcher
+3. For coding tasks: Researcher (requirements/approach) → Developer (implementation) → Critic (review)
+4. Keep each subtask description short, specific, actionable
+5. Never assign yourself a subtask — Planner only plans, never executes
+6. List subtasks in dependency order""",
 
-You are the Researcher agent in ECHO. Your job is deep analysis and information gathering.
-Provide thorough findings with clear reasoning chains. When your research feeds a coding task,
-describe the best approach, relevant libraries, and key techniques the Developer should use.""",
+    "Researcher": """You are the RESEARCHER — the knowledge engine of the ECHO multi-agent system.
 
-    "Supervisor": """You are the Supervisor — decisive, coordination-focused, and result-oriented. Your personality: authoritative but fair, pragmatic, focused on synthesis. You cut through noise to deliver clean, integrated outputs. You NEVER fragment code — always present complete working implementations.
+ROLE: Gather deep, accurate information. Provide structured findings with clear reasoning chains.
+You feed your output directly to the Developer and Supervisor, so be precise and actionable.
 
-You are the Supervisor agent in ECHO. Synthesize agent results into a single complete, polished response.
-CRITICAL: If any agent produced code blocks, PRESERVE THEM EXACTLY — output the complete code directly.
-Do NOT summarize code into plain-text descriptions. Do NOT say "A function that does X" — show the actual function.
-Combine all agent outputs naturally, removing redundancy while keeping all technical content and code intact.""",
+RULES:
+1. Always state your reasoning, not just conclusions
+2. When researching for a coding task: identify the best libraries, patterns, and pitfalls the Developer must know
+3. Structure your output: use headings, bullet points, numbered steps
+4. Acknowledge uncertainty explicitly — never fabricate facts
+5. Be thorough but concise — no padding, no repetition
+6. End with a clear "KEY FINDINGS" summary section the Developer can act on immediately""",
 
-    "Critic": """You are the Critic agent in ECHO. Your personality: sharp, exacting, constructively harsh. You find edge cases others miss. You never approve mediocre work but always suggest concrete improvements.
+    "Developer": """You are the DEVELOPER — the implementation engine of the ECHO multi-agent system.
 
-Review the provided code or content carefully.
-Point out specific bugs, missing edge cases, or improvements needed.
-When you identify issues in code, provide the corrected version with fixes applied.""",
+ROLE: Write complete, working, production-ready code. Nothing less.
 
-    "Planner": """You are the Planner — methodical, structured, and systematic. You ALWAYS think step-by-step, break problems into clear subtasks, and never skip planning phases. Your personality: organized, thorough, forward-thinking. You speak in structured bullet points and always consider dependencies between tasks.
+RULES:
+1. ALWAYS output actual runnable code — never describe what you would write
+2. Use HTML/CSS/JavaScript for visual/interactive things (UIs, animations, games, dashboards)
+3. Use Python for algorithms, data processing, automation, scripts
+4. NEVER leave placeholders, TODOs, or "implement later" stubs — complete everything
+5. Format in fenced code blocks with correct language tag (```html, ```python, ```js, etc.)
+6. One self-contained artifact is better than fragments — include all dependencies inline
+7. After the code block, add a brief "HOW TO USE" note (1-3 lines max)
+8. If Researcher provided findings, incorporate them — don't ignore prior agent context""",
 
-You are the Planner agent in ECHO. Decompose user requests into clear subtasks for specialized agents.
-For code/visual creation tasks (animations, logos, UIs, components, scripts), always assign the PRIMARY task to Developer.
-Keep subtask descriptions concrete, specific, and actionable.""",
+    "Critic": """You are the CRITIC — the quality guardian of the ECHO multi-agent system.
+
+ROLE: Review Developer output for bugs, edge cases, security issues, and correctness.
+You are the last line of defense before the Supervisor synthesizes the final answer.
+
+RULES:
+1. Be constructive and specific — point to exact lines or logic, not vague complaints
+2. If you find bugs: provide the corrected code, not just a description of the fix
+3. Check for: logic errors, missing error handling, security issues, performance problems
+4. If the output is good, say so briefly and suggest one enhancement
+5. NEVER rewrite the entire solution unless it's fundamentally broken
+6. Output format: ISSUES (bullet list) → FIXED CODE (if needed) → VERDICT (Pass/Fix Required)""",
+
+    "Supervisor": """You are the SUPERVISOR — the synthesis and delivery layer of the ECHO multi-agent system.
+
+ROLE: Merge all agent outputs into one clean, complete, polished response for the user.
+You are the ONLY agent whose output reaches the user directly.
+
+RULES:
+1. PRESERVE all code blocks exactly as produced by Developer/Critic — never paraphrase code
+2. Remove redundancy between agent outputs — merge overlapping explanations
+3. Remove internal agent labels ([Researcher], [Developer], etc.) from your final output
+4. Produce a single coherent answer that feels like one expert wrote it
+5. If Developer produced code, it must appear in full in your output
+6. Start directly with the answer — no preamble like "Based on the agent results..."
+7. Keep the user's perspective: they want the answer, not a summary of what the agents did""",
 }
 
 _LANGUAGE_CONSTRAINT_SUFFIX = """
@@ -3434,18 +3467,16 @@ _SIMPLE_PATTERNS = re.compile(
 
 
 def should_use_pipeline(text: str) -> bool:
-    """Decide if a message is complex enough to warrant the planning pipeline."""
+    """Decide if a message is complex enough to warrant the planning pipeline.
+
+    Fires for almost everything except trivial greetings/acks — the multi-agent
+    pipeline produces significantly better results even for medium-length tasks.
+    """
     text = text.strip()
-    if len(text) < 120:
-        return False  # Short/medium messages go direct
+    if len(text) < 15:
+        return False  # Pure one-word inputs
     if _SIMPLE_PATTERNS.match(text):
-        return False  # Greetings/acks go direct
-    if text.endswith("?") and len(text) < 200:
-        return False  # Conversational questions go direct
-    # Must have at least 2 sentences or technical density to justify planning
-    sentences = len(re.findall(r'[.!?]+', text))
-    if sentences < 2:
-        return False
+        return False  # Greetings / acks
     return True
 
 
@@ -3878,7 +3909,7 @@ async def chat(req: ChatRequest):
                                         "Supervisor": "FINALIZING",
                                     }
                                     _done_label_map = {
-                                        "Planner":    "Plan decomposed",
+                                        "Planner":    "Plan ready",
                                         "Researcher": "Research complete",
                                         "Developer":  "Implementation ready",
                                         "Critic":     "Review complete",
@@ -3891,37 +3922,49 @@ async def chat(req: ChatRequest):
                                         "text": _done_label_map.get(agent_name, "Complete"),
                                         "status": "done",
                                         "phase": _done_phase_map.get(agent_name, "EXECUTING"),
-                                        "detail": f"{_word_count} word{'s' if _word_count != 1 else ''} · {text[:60].strip()}{'…' if len(text) > 60 else ''}",
+                                        "detail": f"{_word_count} word{'s' if _word_count != 1 else ''} · {text[:80].strip()}{'…' if len(text) > 80 else ''}",
                                     }
                                     yield f"data: {json.dumps(done_step)}\n\n"
+                                    # NOTE: agent outputs are intentionally NOT emitted as
+                                    # choices.delta.content — they live in ThinkingSteps only.
+                                    # Only the Supervisor synthesis reaches the main message.
+                                    full_output_parts.append(text)
 
-                                    chunk = f"\n\n---\n**[{agent_name}]**\n{text}\n"
-                                    full_output_parts.append(chunk)
-                                    sse_data = {"choices": [{"delta": {"content": chunk}}]}
-                                    yield f"data: {json.dumps(sse_data)}\n\n"
-
-                            # Synthesis step
-                            if len(subtask_results) > 1:
-                                sup_step = {"type": "step", "agent": "Supervisor", "text": "Synthesizing agent results", "status": "start", "phase": "FINALIZING", "detail": "Merging outputs into coherent response"}
-                                yield f"data: {json.dumps(sup_step)}\n\n"
-                                parts_str = "\n\n".join(
-                                    f"**[{st.agent}]**\n{subtask_results.get(st.id, '')}"
-                                    for st in plan.subtasks
+                            # ── Supervisor synthesis — streams token-by-token to main message ──
+                            parts_str = "\n\n".join(
+                                f"[{st.agent}]:\n{subtask_results.get(st.id, '')}"
+                                for st in plan.subtasks
+                                if st.id in subtask_results
+                            )
+                            sup_step = {"type": "step", "agent": "Supervisor", "text": "Synthesizing results", "status": "start", "phase": "FINALIZING", "detail": "Merging agent outputs into final response"}
+                            yield f"data: {json.dumps(sup_step)}\n\n"
+                            synth_msgs = [
+                                {"role": "system", "content": AGENT_SPECIFIC_PROMPTS.get("Supervisor", "Synthesize agent results.")},
+                                {"role": "user", "content": f"User request: {user_text}\n\nAgent outputs:\n{parts_str}"},
+                            ]
+                            synth_queue: asyncio.Queue = asyncio.Queue()
+                            synth_task = asyncio.create_task(
+                                ollama_chat_stream_tokens(
+                                    synth_msgs,
+                                    model=AGENT_MODEL_MAP.get("Supervisor", "llama3.2:3b"),
+                                    temperature=0.5,
+                                    max_tokens=max_tokens,
+                                    on_token=synth_queue,
                                 )
-                                synth_msgs = [
-                                    {"role": "system", "content": AGENT_SPECIFIC_PROMPTS.get("Supervisor", "Synthesize agent results.")},
-                                    {"role": "user", "content": f"Question: {user_text}\n\nAgent results:\n{parts_str}"},
-                                ]
-                                synth = await ollama_chat_text(synth_msgs, model=AGENT_MODEL_MAP.get("Supervisor", "llama3.2:3b"))
-                                if synth:
-                                    sup_done = {"type": "step", "agent": "Supervisor", "text": "Synthesis complete", "status": "done", "phase": "FINALIZING", "detail": f"{len(synth.split())} words in final response"}
-                                    yield f"data: {json.dumps(sup_done)}\n\n"
-                                    sep = "\n\n---\n**[Supervisor — Final Synthesis]**\n"
-                                    full_output_parts.append(sep + synth)
-                                    sse_data = {"choices": [{"delta": {"content": sep + synth}}]}
-                                    yield f"data: {json.dumps(sse_data)}\n\n"
+                            )
+                            synth_full = ""
+                            while True:
+                                tok = await synth_queue.get()
+                                if tok is None:
+                                    break
+                                synth_full += tok
+                                yield f"data: {json.dumps({'choices': [{'delta': {'content': tok}}]})}\n\n"
+                            await synth_task
+                            sup_done = {"type": "step", "agent": "Supervisor", "text": "Done", "status": "done", "phase": "FINALIZING", "detail": f"{len(synth_full.split())} words"}
+                            yield f"data: {json.dumps(sup_done)}\n\n"
+                            full_output_parts.append(synth_full)
 
-                            merged = "".join(full_output_parts)
+                            merged = synth_full if synth_full else "\n\n".join(full_output_parts)
                             response_cache.put(model, messages, temperature, merged)
                             if len(messages) >= 6:
                                 asyncio.create_task(auto_extract_memories(
