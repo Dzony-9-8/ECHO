@@ -5288,7 +5288,7 @@ async def scan_claude_skills():
     import json as _json
     from fastapi.responses import Response as _Response
 
-    base = pathlib.Path.home() / ".claude" / "skills"
+    base = Path.home() / ".claude" / "skills"
 
     if not base.exists():
         payload = {"skills": [], "directory": str(base), "exists": False}
