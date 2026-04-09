@@ -1676,6 +1676,34 @@ async def run_subtask(
 
     # Build messages for this subtask — use agent-specific prompt for better per-role behavior
     agent_system = AGENT_SPECIFIC_PROMPTS.get(agent, system_prompt)
+
+    # ── Skill injection ───────────────────────────────────────────────────────
+    # Find the 1-2 most relevant compiled skills for this subtask via keyword
+    # overlap, then append their full content to the agent system prompt.
+    # We cap at 2 skills and ~6 000 chars total to stay within small-model ctx.
+    if _compiled_skills_cache:
+        task_lower = subtask.task.lower()
+        task_words = set(re.split(r'\W+', task_lower)) - {"the","a","an","to","of","in","for","and","or","is","are","be","with","on","at","do","use","you","your","that","this","it","by","as","from","have","will","can","should","make","how","what","when","where","which"}
+
+        scored: list[tuple[float, dict]] = []
+        for skill in _compiled_skills_cache:
+            skill_text = (skill.get("name","") + " " + skill.get("description","") + " " + " ".join(skill.get("capabilities",[]))).lower()
+            skill_words = set(re.split(r'\W+', skill_text))
+            overlap = len(task_words & skill_words)
+            if overlap > 0:
+                scored.append((overlap, skill))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top_skills = [s for _, s in scored[:2]]
+
+        if top_skills:
+            skill_block = "\n\n".join(
+                f"## SKILL: {s['name']}\n{s['content'][:3000]}"
+                for s in top_skills
+            )
+            agent_system = agent_system + f"\n\n---\nThe following skill(s) are available and MUST guide your response:\n\n{skill_block}\n---"
+    # ─────────────────────────────────────────────────────────────────────────
+
     messages = [{"role": "system", "content": agent_system}]
 
     # Include results from dependencies
