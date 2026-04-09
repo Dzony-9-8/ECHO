@@ -268,7 +268,7 @@ const ChatMessage = ({
                   : { boxShadow: "0 2px 10px hsl(0 0% 0% / 0.18)" }
               }
             >
-              {msgIsStreaming && !message.content ? (
+              {msgIsStreaming && !message.content && (!steps || steps.length === 0) ? (
                 <StreamingBar />
               ) : (
                 <div className="prose prose-sm prose-invert max-w-none [&_code]:text-terminal-amber [&_code:not(pre_code)]:bg-muted [&_pre]:bg-transparent [&_pre]:border-none [&_pre]:p-0 [&_pre]:m-0">

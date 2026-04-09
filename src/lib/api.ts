@@ -308,6 +308,7 @@ const sendLocalMessage = async (
         no_cache: noCache,
         temperature,
         max_tokens: maxTokens,
+        depth: 1,
         ...(images && images.length > 0 ? { images } : {}),
         ...(attachments && attachments.length > 0 ? { attachments } : {}),
       }),
