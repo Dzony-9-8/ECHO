@@ -17,6 +17,9 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 .DS_Store
+desktop.ini
+*.tmp
+ollama_library.html
 *.suo
 *.ntvs*
 *.njsproj
@@ -39,6 +42,7 @@ backend/__pycache__/
 backend/chroma_db/
 backend/knowledge/
 backend/logs/
+backend/data/
 
 # Build artifacts
 build_out.txt

@@ -10,7 +10,7 @@ import {
   Bot, User, Cpu, Image, FileText, Edit3, RefreshCw,
   Copy, Check, Hash, GitBranch, ThumbsUp, ThumbsDown, Volume2, Eye,
 } from "lucide-react";
-import { useState, useMemo, lazy, Suspense, memo, useEffect } from "react";
+import { useState, useMemo, lazy, Suspense, memo, useEffect, Component, type ReactNode, type ErrorInfo } from "react";
 import { getBackendMode, submitFeedback, getBackendUrl, checkVisionStatus, analyzeImage } from "@/lib/api";
 import CodeBlock from "./CodeBlock";
 import BranchIndicator, { type BranchInfo } from "./BranchIndicator";
@@ -19,6 +19,14 @@ import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 import { getBranchesForMessage } from "@/lib/branches";
 
 const MermaidDiagram = lazy(() => import("./MermaidDiagram"));
+
+// ── Error boundary — prevents any ThinkingSteps crash from blacking out the page ──
+class StepsBoundary extends Component<{ children: ReactNode }, { err: boolean }> {
+  state = { err: false };
+  static getDerivedStateFromError() { return { err: true }; }
+  componentDidCatch(e: Error, info: ErrorInfo) { console.warn("[ThinkingSteps crash]", e, info); }
+  render() { return this.state.err ? null : this.props.children; }
+}
 
 interface Props {
   message: ChatMessageType;
@@ -249,7 +257,9 @@ const ChatMessage = ({
           ) : (
             <>
               {steps && steps.length > 0 && (
-                <ThinkingSteps steps={steps} isStreaming={isStreaming ?? false} />
+                <StepsBoundary>
+                  <ThinkingSteps steps={steps} isStreaming={isStreaming ?? false} />
+                </StepsBoundary>
               )}
               {!isUser && message.weatherData && (
                 <div className="mb-2 w-full max-w-[85%]">

@@ -25,13 +25,25 @@ interface ImagePreview {
   url: string;
 }
 
+// Minimal shape of the Web Speech API result event (not in the TS DOM lib).
+interface SpeechResultEvent {
+  resultIndex: number;
+  results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }>;
+}
+
 const ChatInput = ({ onSend, disabled }: Props) => {
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<FileAttachment[]>([]);
   const [imagePreviews, setImagePreviews] = useState<ImagePreview[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [depth, setDepth] = useState(1);
+  const [depth, setDepth] = useState(() => {
+    const stored = Number(localStorage.getItem("echo_depth"));
+    return stored >= 1 && stored <= 5 ? stored : 1;
+  });
   const [model, setModel] = useState(getSelectedModel);
+
+  // Persist depth so presets (and the next session) can restore it.
+  useEffect(() => { localStorage.setItem("echo_depth", String(depth)); }, [depth]);
   const [isListening, setIsListening] = useState(false);
   const [isIntercomActive, setIsIntercomActive] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -61,7 +73,7 @@ const ChatInput = ({ onSend, disabled }: Props) => {
 
     let finalTranscript = "";
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: SpeechResultEvent) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;

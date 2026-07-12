@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { getBackendUrl } from "@/lib/api";
+import { getBackendUrl, getBackendMode } from "@/lib/api";
 import { toast } from "sonner";
+import { AlertTriangle, CheckCircle2, Loader2, ServerOff } from "lucide-react";
 
 const DEFAULT_MODELFILE = `FROM llama3.2:3b
 
@@ -21,6 +22,30 @@ export default function ModelfileEditor() {
   const [modelfile, setModelfile] = useState(DEFAULT_MODELFILE);
   const [log, setLog] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
+  const [backendReachable, setBackendReachable] = useState<boolean | null>(null);
+  const mode = getBackendMode();
+
+  // Probe backend connectivity on mount
+  useEffect(() => {
+    if (mode !== "local") {
+      setBackendReachable(false);
+      return;
+    }
+    let cancelled = false;
+    const check = async () => {
+      try {
+        const url = getBackendUrl();
+        const resp = await fetch(`${url}/api/health`, {
+          signal: AbortSignal.timeout(4000),
+        });
+        if (!cancelled) setBackendReachable(resp.ok);
+      } catch {
+        if (!cancelled) setBackendReachable(false);
+      }
+    };
+    check();
+    return () => { cancelled = true; };
+  }, [mode]);
 
   const handleCreate = async () => {
     const name = modelName.trim();
@@ -30,6 +55,10 @@ export default function ModelfileEditor() {
     }
     if (!modelfile.trim()) {
       toast.error("Modelfile cannot be empty");
+      return;
+    }
+    if (mode !== "local") {
+      toast.error("Modelfile Editor requires Local Mode. Switch to Local in settings.");
       return;
     }
 
@@ -42,6 +71,7 @@ export default function ModelfileEditor() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, modelfile }),
+        signal: AbortSignal.timeout(300000), // 5min timeout for model creation
       });
 
       if (!res.ok || !res.body) {
@@ -89,9 +119,13 @@ export default function ModelfileEditor() {
           }
         }
       }
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to create model");
-      setLog((prev) => [...prev, `ERROR: ${e?.message || "unknown"}`]);
+    } catch (e: unknown) {
+      const message =
+        e instanceof TypeError && (e as TypeError).message.includes("fetch")
+          ? "Cannot connect to backend. Is it running?"
+          : (e as Error)?.message || "Failed to create model";
+      toast.error(message);
+      setLog((prev) => [...prev, `ERROR: ${message}`]);
     } finally {
       setCreating(false);
     }
@@ -107,6 +141,35 @@ export default function ModelfileEditor() {
         </p>
       </div>
 
+      {/* Backend status indicator */}
+      {mode !== "local" && (
+        <div className="flex items-center gap-2 p-2.5 rounded-md border border-terminal-amber/40 bg-terminal-amber/5 text-terminal-amber text-xs font-mono">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          <span>Modelfile Editor requires <strong>Local Mode</strong>. Switch from Cloud Mode in the top-bar settings.</span>
+        </div>
+      )}
+
+      {mode === "local" && backendReachable === false && (
+        <div className="flex items-center gap-2 p-2.5 rounded-md border border-destructive/40 bg-destructive/5 text-destructive text-xs font-mono">
+          <ServerOff className="w-4 h-4 flex-shrink-0" />
+          <span>Cannot reach backend at <code>{getBackendUrl()}</code>. Start the backend first: <code>cd backend && uvicorn main:app --port 8000</code></span>
+        </div>
+      )}
+
+      {mode === "local" && backendReachable === null && (
+        <div className="flex items-center gap-2 p-2.5 rounded-md border border-border bg-muted/30 text-muted-foreground text-xs font-mono">
+          <Loader2 className="w-4 h-4 flex-shrink-0 animate-spin" />
+          <span>Checking backend connection…</span>
+        </div>
+      )}
+
+      {mode === "local" && backendReachable === true && (
+        <div className="flex items-center gap-2 p-2.5 rounded-md border border-primary/30 bg-primary/5 text-primary text-xs font-mono">
+          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+          <span>Backend connected at <code>{getBackendUrl()}</code></span>
+        </div>
+      )}
+
       <div className="flex gap-2 items-center">
         <Input
           placeholder="Model name (e.g. my-coder:latest)"
@@ -116,7 +179,7 @@ export default function ModelfileEditor() {
         />
         <Button
           onClick={handleCreate}
-          disabled={creating || !modelName.trim()}
+          disabled={creating || !modelName.trim() || mode !== "local" || !backendReachable}
           className="shrink-0"
         >
           {creating ? "Creating…" : "Create Model"}
@@ -152,3 +215,4 @@ export default function ModelfileEditor() {
     </div>
   );
 }
+

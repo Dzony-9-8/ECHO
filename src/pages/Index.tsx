@@ -18,6 +18,13 @@ const AutonomousMode = lazy(() => import("@/components/AutonomousMode"));
 const ProjectMode = lazy(() => import("@/components/ProjectMode"));
 const ModelCompareView = lazy(() => import("@/components/ModelCompareView"));
 const ModelfileEditor = lazy(() => import("@/components/ModelfileEditor"));
+const OdysseusUpdates = lazy(() => import("@/components/OdysseusUpdates"));
+const PresetsView = lazy(() => import("@/components/PresetsView"));
+const CookbookView = lazy(() => import("@/components/CookbookView"));
+const NotesTasksView = lazy(() => import("@/components/NotesTasksView"));
+const DocumentsView = lazy(() => import("@/components/DocumentsView"));
+const GalleryView = lazy(() => import("@/components/GalleryView"));
+const CalendarView = lazy(() => import("@/components/CalendarView"));
 
 const LazyFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -45,6 +52,13 @@ const Index = () => {
     project: "Project Mode",
     compare: "Model Comparison",
     modelfile: "Modelfile Editor",
+    odysseus: "Odysseus Updates",
+    presets: "Presets & Commands",
+    cookbook: "Cookbook",
+    notes: "Notes & Tasks",
+    documents: "Documents",
+    gallery: "Gallery",
+    calendar: "Calendar",
   };
 
   const handlePromptSelect = (prompt: string) => {
@@ -74,6 +88,13 @@ const Index = () => {
           {activeView === "project" && <ProjectMode />}
           {activeView === "compare" && <ModelCompareView />}
           {activeView === "modelfile" && <ModelfileEditor />}
+          {activeView === "odysseus" && <OdysseusUpdates />}
+          {activeView === "presets" && <PresetsView />}
+          {activeView === "cookbook" && <CookbookView />}
+          {activeView === "notes" && <NotesTasksView onSendToChat={handlePromptSelect} />}
+          {activeView === "documents" && <DocumentsView />}
+          {activeView === "gallery" && <GalleryView />}
+          {activeView === "calendar" && <CalendarView />}
         </Suspense>
       </main>
     </div>

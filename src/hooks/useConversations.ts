@@ -23,8 +23,14 @@ const setLocalConversations = (convs: Conversation[]) => {
 };
 
 const getLocalMessages = (convId: string): ChatMessage[] => {
-  try { return JSON.parse(localStorage.getItem(localMsgKey(convId)) || "[]"); }
-  catch { return []; }
+  try {
+    const raw: ChatMessage[] = JSON.parse(localStorage.getItem(localMsgKey(convId)) || "[]");
+    // JSON.stringify turns Date objects into ISO strings; restore them on load.
+    return raw.map(m => ({
+      ...m,
+      timestamp: m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp as unknown as string),
+    }));
+  } catch { return []; }
 };
 
 const setLocalMessages = (convId: string, msgs: ChatMessage[]) => {

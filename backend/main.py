@@ -138,6 +138,10 @@ from fastapi import WebSocket, WebSocketDisconnect
 from memory.hindsight_engine import HindsightMemory
 from memory.reme_compactor import ContextCompactor
 from memory.alfred_graph import AlfredKnowledgeGraph
+import model_advisor
+from model_advisor import check_model_outdated
+import odysseus_updates
+import image_gen
 
 _hindsight = HindsightMemory()
 _reme = ContextCompactor()
@@ -1613,22 +1617,43 @@ _ctx_manager = ContextWindowManager()
 # Feature #8: Task Planning Agent
 # ─────────────────────────────────────────────────────────────────────────────
 
-PLANNER_SYSTEM = """You are the Planner agent in the ECHO multi-agent system. Your job is to decompose user requests into subtasks for specialized agents.
+PLANNER_SYSTEM = """You are the Planner agent in the ECHO multi-agent system. Decompose user requests into the MINIMUM set of subtasks needed.
 
 Available agents:
-- Supervisor: General coordination, synthesis, simple Q&A
-- Researcher: Deep analysis, comparisons, evaluations, reasoning
-- Developer: Code generation, debugging, technical implementations
-- Critic: Quality review, fact-checking, hallucination detection
+- Supervisor: Direct answers, synthesis, simple Q&A — use alone for straightforward questions
+- Researcher: Facts, analysis, comparisons, explanations — no code
+- Developer: Code generation, debugging, technical implementations — no research
+- Critic: Quality review — only add when output quality is critical
 
-Rules:
-1. For simple questions/greetings, return a single Supervisor subtask
-2. For complex tasks, break into 2-4 subtasks with appropriate agents
-3. Mark dependencies — a subtask can depend on previous subtask IDs
-4. Each subtask should be self-contained with clear instructions
+PARALLEL EXECUTION RULES (critical for speed):
+- Researcher and Developer MUST have depends_on:[] when both are used — they run simultaneously
+- Critic depends on Developer (or Researcher) — never on both
+- Supervisor always runs last, depends on all preceding tasks
+- NEVER make Developer depend on Researcher or vice versa
 
-You MUST respond with ONLY a JSON object in this exact format, no other text:
-{"subtasks": [{"id": "t1", "agent": "Developer", "task": "Write a Python function that...", "depends_on": []}, {"id": "t2", "agent": "Critic", "task": "Review the code from t1 for...", "depends_on": ["t1"]}]}"""
+ROUTING GUIDE:
+- Simple question / greeting → single Supervisor subtask
+- Code only → Developer → Supervisor (2 tasks, fast)
+- Research only → Researcher → Supervisor (2 tasks, fast)
+- Code + explanation → Researcher[] + Developer[] → Supervisor (3 tasks, parallel middle)
+- High-stakes output → Researcher[] + Developer[] → Critic[R+D] → Supervisor (4 tasks)
+
+Keep task descriptions SHORT and specific (1-2 sentences max).
+
+Respond with ONLY valid JSON, no other text:
+{"subtasks": [{"id": "t1", "agent": "Developer", "task": "Write Python scraper for...", "depends_on": []}, {"id": "t2", "agent": "Supervisor", "task": "Synthesize the code from t1 into a final response.", "depends_on": ["t1"]}]}"""
+
+
+# Per-agent token budgets — internal agents (Planner, Critic) produce short
+# structured output; only Developer and Supervisor need the full 2 k window.
+# Cutting these down is the single fastest way to reduce pipeline latency.
+AGENT_MAX_TOKENS: dict[str, int] = {
+    "Planner":    350,   # JSON plan only — no prose
+    "Researcher": 750,   # concise findings summary
+    "Developer":  1800,  # needs room for code
+    "Critic":     350,   # brief structured critique
+    "Supervisor": 1200,  # user-facing synthesis
+}
 
 
 class Subtask(BaseModel):
@@ -1707,6 +1732,11 @@ async def run_subtask(
     # Smart model routing per subtask
     model = await select_model(subtask.task, AGENT_MODEL_MAP.get(agent))
     await vram_scheduler.request_model(model)
+
+    # Per-agent token budget overrides the pipeline-wide max_tokens.
+    # Internal agents (Planner, Critic) only need short outputs; giving them
+    # fewer tokens is the fastest single change to reduce latency.
+    effective_max_tokens = AGENT_MAX_TOKENS.get(agent, max_tokens)
 
     # Build messages for this subtask — use agent-specific prompt for better per-role behavior
     agent_system = AGENT_SPECIFIC_PROMPTS.get(agent, system_prompt)
@@ -1798,29 +1828,10 @@ async def run_subtask(
             except Exception:
                 pass
 
-    # v3.5: Thought Graph for Researcher — 3 parallel reasoning paths with critic selection
-    if agent == "Researcher":
-        try:
-            thought_result = await thought_graph(subtask.task, model=model, n_paths=3)
-            if thought_result:
-                messages.append({
-                    "role": "system",
-                    "content": f"[THOUGHT GRAPH — best reasoning path selected]\n{thought_result}",
-                })
-        except Exception:
-            pass
-
-    # v3.5: Structured CoT for tasks that benefit from explicit reasoning
-    if _needs_thinking(subtask.task):
-        try:
-            thought = await thinking_loop(subtask.task, model=model)
-            if thought:
-                messages.append({
-                    "role": "system",
-                    "content": f"[REASONING — OBSERVE/ANALYZE/PLAN/VERIFY]\n{thought}",
-                })
-        except Exception:
-            pass
+    # NOTE: thought_graph (4 LLM calls) and thinking_loop (1 LLM call per agent)
+    # were removed — they added ~200s of pre-processing latency per pipeline run.
+    # Reasoning is now baked directly into each agent's AGENT_SPECIFIC_PROMPTS
+    # system prompt so agents reason inline without extra round-trips to Ollama.
 
     messages.append({"role": "user", "content": subtask.task})
 
@@ -1834,7 +1845,7 @@ async def run_subtask(
     subtask_success = False
     try:
         result = await asyncio.wait_for(
-            ollama_chat_text(messages, model=model, temperature=temperature, max_tokens=max_tokens),
+            ollama_chat_text(messages, model=model, temperature=temperature, max_tokens=effective_max_tokens),
             timeout=120,
         )
         subtask_success = bool(result and len(result.strip()) > 0)
@@ -4827,6 +4838,89 @@ async def create_model(req: ModelfileRequest):
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Update Advisor — button-triggered, advisory only (no download/deploy/delete)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CheckUpdatesRequest(BaseModel):
+    model: str | None = None
+
+@app.post("/api/models/check-updates")
+async def check_model_updates(req: CheckUpdatesRequest):
+    """
+    Checks real sources (Hugging Face, the Ollama library, The Rundown AI) and reports
+    whether the given/selected model is outdated, plus newer alternatives.
+    Purely advisory: it never downloads, deploys, or deletes anything.
+    """
+    current = (req.model or "").strip()
+    if not current:
+        # Fall back to the configured default if the client didn't send one.
+        current = AGENT_MODEL_MAP.get("default", "llama3.2:3b")
+
+    client = await get_external_client()
+    report = await check_model_outdated(current, client, _logger)
+    return report
+
+
+@app.get("/api/models/recommend")
+async def recommend_models_endpoint():
+    """Hardware-aware Cookbook recommendations — ranks real Ollama models by fit.
+
+    Advisory only: returns `ollama pull` targets, never downloads anything.
+    """
+    gpu = get_gpu_info()
+    vram_gb = (gpu["vram_total_mb"] / 1024.0) if gpu and gpu.get("vram_total_mb") else 0.0
+    ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+    client = await get_external_client()
+    return await model_advisor.recommend_models(vram_gb, ram_gb, client, _logger)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Odysseus Update Checker — advisory only (surfaces upstream changes, never applies)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OdysseusAckRequest(BaseModel):
+    sha: str
+
+@app.get("/api/odysseus/updates/check")
+async def odysseus_updates_check(
+    owner: str = odysseus_updates.DEFAULT_OWNER,
+    repo: str = odysseus_updates.DEFAULT_REPO,
+    branch: str = odysseus_updates.DEFAULT_BRANCH,
+):
+    """Checks the upstream Odysseus repo for commits newer than the acknowledged baseline."""
+    client = await get_external_client()
+    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    return await odysseus_updates.check_updates(
+        get_writable_path(), client, owner, repo, branch, token, _logger
+    )
+
+@app.post("/api/odysseus/updates/ack")
+async def odysseus_updates_ack(req: OdysseusAckRequest):
+    """Marks a commit SHA as reviewed so future checks report only newer commits."""
+    return odysseus_updates.acknowledge(get_writable_path(), req.sha)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Image generation — proxy to a configured OpenAI-compatible images endpoint
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ImageGenRequest(BaseModel):
+    prompt: str
+    size: str = "1024x1024"
+    n: int = 1
+
+@app.get("/api/images/status")
+def images_status():
+    """Reports whether an image-generation endpoint is configured (no key is exposed)."""
+    return image_gen.status()
+
+@app.post("/api/images/generate")
+async def images_generate(req: ImageGenRequest):
+    """Generates image(s) via the configured OpenAI-compatible endpoint. Never fakes output."""
+    client = await get_external_client()
+    return await image_gen.generate(req.prompt, req.size, req.n, client, _logger)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Enhanced /api/models with VRAM estimation (Item 8)

@@ -20,6 +20,13 @@ import {
   FolderOpen,
   Columns2,
   FileCode2,
+  Ship,
+  SlidersHorizontal,
+  ChefHat,
+  NotebookPen,
+  FilePen,
+  Image as ImageIcon,
+  CalendarDays,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
@@ -40,7 +47,14 @@ export type ViewType =
   | "autonomous"
   | "project"
   | "compare"
-  | "modelfile";
+  | "modelfile"
+  | "odysseus"
+  | "presets"
+  | "cookbook"
+  | "notes"
+  | "documents"
+  | "gallery"
+  | "calendar";
 
 interface Props {
   activeView: ViewType;
@@ -70,6 +84,13 @@ const navItems: {
   { id: "project",    icon: FolderOpen, label: "Projects",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
   { id: "compare",    icon: Columns2,   label: "Compare",    color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
   { id: "modelfile",  icon: FileCode2,  label: "Modelfile",  color: "text-primary",          glow: "hsl(142 70% 45%)" },
+  { id: "odysseus",   icon: Ship,       label: "Odysseus",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "presets",    icon: SlidersHorizontal, label: "Presets", color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "cookbook",   icon: ChefHat,    label: "Cookbook",   color: "text-primary",          glow: "hsl(142 70% 45%)" },
+  { id: "notes",      icon: NotebookPen, label: "Notes",     color: "text-terminal-amber",   glow: "hsl(38 90% 55%)"  },
+  { id: "documents",  icon: FilePen,    label: "Documents",  color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "gallery",    icon: ImageIcon,  label: "Gallery",    color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "calendar",   icon: CalendarDays, label: "Calendar", color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {

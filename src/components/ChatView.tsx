@@ -55,6 +55,9 @@ const ChatView = () => {
     new Set(["Planner", "Supervisor", "Developer", "Researcher", "Critic"])
   );
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Incremented on every new conversation / conversation switch.
+  // doSend captures its own gen; any callback that sees a stale gen is ignored.
+  const streamGenRef = useRef(0);
 
   const {
     conversations,
@@ -98,14 +101,20 @@ const ChatView = () => {
   }, [activeConversationId]);
 
   const handleSelectConversation = useCallback(async (id: string) => {
+    streamGenRef.current += 1;   // invalidate any in-flight stream
     setActiveConversationId(id);
+    setIsStreaming(false);
+    setMessageSteps(new Map());
     const msgs = await loadMessages(id);
     setMessages(msgs.length > 0 ? msgs : [WELCOME_MSG]);
     setShowMobileHistory(false);
   }, [loadMessages, setActiveConversationId]);
 
   const handleNewConversation = useCallback(async () => {
+    streamGenRef.current += 1;   // invalidate any in-flight stream
     setActiveConversationId(null);
+    setIsStreaming(false);
+    setMessageSteps(new Map());
     setMessages([WELCOME_MSG]);
     setShowMobileHistory(false);
   }, [setActiveConversationId]);
@@ -331,6 +340,10 @@ const ChatView = () => {
     setStreamStartTime(Date.now());
     setAgentActive(assistantMsg.agent || "ECHO Cloud", content.slice(0, 60));
 
+    // Capture current generation — if it changes (new conversation / switch), all our
+    // callbacks below become no-ops so they can't corrupt the new conversation's state.
+    const myGen = streamGenRef.current;
+
     let convId = activeConversationId;
     if (!convId) {
       convId = await createConversation(content.slice(0, 80) || "New Conversation");
@@ -344,7 +357,7 @@ const ChatView = () => {
       const response = await sendMessage(
         allForBackend,
         (chunk) => {
-          // Direct update per token — no batching, gives letter-by-letter streaming
+          if (streamGenRef.current !== myGen) return;
           setMessages((prev) =>
             prev.map((m) => (m.id === msgId ? { ...m, content: chunk } : m))
           );
@@ -353,7 +366,7 @@ const ChatView = () => {
         model,
         images,
         (stepEvent: ChatStepEvent) => {
-          // Accumulate step events for this message
+          if (streamGenRef.current !== myGen) return;
           setMessageSteps((prev) => {
             const existing = prev.get(msgId) ?? [];
             const now = Date.now();
@@ -371,7 +384,6 @@ const ChatView = () => {
                 },
               ]);
             } else {
-              // Find the last "running" step for this agent and mark done
               const updated = [...existing];
               for (let i = updated.length - 1; i >= 0; i--) {
                 if (updated[i].agent === stepEvent.agent && updated[i].status === "running") {
@@ -385,12 +397,13 @@ const ChatView = () => {
         },
         backendAttachments.length > 0 ? backendAttachments : undefined,
         (weatherData) => {
+          if (streamGenRef.current !== myGen) return;
           setMessages((prev) =>
             prev.map((m) => m.id === msgId ? { ...m, weatherData } : m)
           );
         },
         (agent: string, token: string) => {
-          // Stream tokens into thoughtText (separate from the step label)
+          if (streamGenRef.current !== myGen) return;
           setMessageSteps((prev) => {
             const existing = prev.get(msgId) ?? [];
             const updated = [...existing];
@@ -404,6 +417,9 @@ const ChatView = () => {
           });
         }
       );
+
+      // If the conversation changed while we were streaming, discard everything
+      if (streamGenRef.current !== myGen) return;
 
       const finalContent = response || assistantMsg.content;
       setMessages((prev) =>
@@ -426,11 +442,12 @@ const ChatView = () => {
       logUsage(assistantMsg.model || "unknown", totalMsgTokens, latency, convId || undefined);
       setAgentComplete(assistantMsg.agent || "ECHO Cloud", totalMsgTokens);
 
-      // Auto-open canvas if the response contains previewable code blocks
       if (/```(html|css|javascript|js|jsx|tsx|svg)\b/i.test(finalContent)) {
         setShowCanvas(true);
       }
     } catch (err: any) {
+      if (streamGenRef.current !== myGen) return; // stale — swallow silently
+
       const errMsg = err?.message || "Connection failed";
       const errType = err?.errorType || "";
 
@@ -459,7 +476,10 @@ const ChatView = () => {
       );
       setAgentComplete(assistantMsg.agent || "ECHO Cloud", 0);
     } finally {
-      setIsStreaming(false);
+      // Only clear streaming state if we're still the active generation
+      if (streamGenRef.current === myGen) {
+        setIsStreaming(false);
+      }
     }
   };
 

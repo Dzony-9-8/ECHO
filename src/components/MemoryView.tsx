@@ -29,7 +29,11 @@ const MemoryView = () => {
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newMemory, setNewMemory] = useState({ type: "semantic" as const, content: "", tags: "" });
+  const [newMemory, setNewMemory] = useState<{
+    type: "episodic" | "semantic" | "procedural";
+    content: string;
+    tags: string;
+  }>({ type: "semantic", content: "", tags: "" });
   const isLocal = getBackendMode() === "local";
 
   const loadMemories = useCallback(async () => {

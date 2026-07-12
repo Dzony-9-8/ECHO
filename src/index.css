@@ -229,6 +229,11 @@
   100% { opacity: 0; transform: translateY(28px) translateX(-2px); }
 }
 
+@keyframes cot-blink {
+  0%, 100% { opacity: 0.9; }
+  50%       { opacity: 0;   }
+}
+
 /* ── Utility classes from animations ────────────────────────────────────────── */
 .cursor-blink   { animation: blink 1s step-end infinite; }
 .pulse-glow     { animation: pulse-glow 2s ease-in-out infinite; }
