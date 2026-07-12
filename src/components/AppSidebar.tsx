@@ -27,6 +27,7 @@ import {
   FilePen,
   Image as ImageIcon,
   CalendarDays,
+  Palette,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
@@ -54,7 +55,8 @@ export type ViewType =
   | "notes"
   | "documents"
   | "gallery"
-  | "calendar";
+  | "calendar"
+  | "themes";
 
 interface Props {
   activeView: ViewType;
@@ -91,6 +93,7 @@ const navItems: {
   { id: "documents",  icon: FilePen,    label: "Documents",  color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
   { id: "gallery",    icon: ImageIcon,  label: "Gallery",    color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
   { id: "calendar",   icon: CalendarDays, label: "Calendar", color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "themes",     icon: Palette,    label: "Themes",     color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {
