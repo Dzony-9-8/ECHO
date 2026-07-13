@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Palette, Check, RotateCcw, Type, ScanLine } from "lucide-react";
+import { Palette, Check, RotateCcw, Type, ScanLine, CaseSensitive } from "lucide-react";
 import { toast } from "sonner";
 import { THEMES, type Theme, getSavedThemeId, setTheme } from "@/lib/themes";
+import { FONTS, getSavedFontId, setFont } from "@/lib/fonts";
 
 const hsl = (v: string) => `hsl(${v})`;
 const FONT_SIZES = [
@@ -49,6 +50,7 @@ const ThemeCard = ({ theme, active, onApply }: { theme: Theme; active: boolean; 
 
 const ThemesView = () => {
   const [activeId, setActiveId] = useState<string | null>(getSavedThemeId());
+  const [fontId, setFontId] = useState(getSavedFontId);
   const [fontSize, setFontSize] = useState(() => localStorage.getItem("echo_fontsize") || "14px");
   const [scanlines, setScanlines] = useState(() => localStorage.getItem("echo_scanlines") !== "false");
 
@@ -68,6 +70,12 @@ const ThemesView = () => {
     setFontSize(size);
     localStorage.setItem("echo_fontsize", size);
     document.documentElement.style.setProperty("--chat-font-size", size);
+  };
+
+  const applyFont = (id: string) => {
+    setFontId(id);
+    setFont(id);
+    toast.success(`Font: ${FONTS.find((f) => f.id === id)?.name}`);
   };
 
   const toggleScanlines = () => {
@@ -97,6 +105,28 @@ const ThemesView = () => {
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
             {THEMES.map((t) => (
               <ThemeCard key={t.id} theme={t} active={activeId === t.id} onApply={() => apply(t.id)} />
+            ))}
+          </div>
+        </div>
+
+        {/* UI font */}
+        <div>
+          <div className="flex items-center gap-1.5 text-[9px] font-mono text-muted-foreground/50 uppercase tracking-widest mb-2">
+            <CaseSensitive className="w-3.5 h-3.5" /> UI font
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {FONTS.map((f) => (
+              <button
+                key={f.id}
+                onClick={() => applyFont(f.id)}
+                style={{ fontFamily: `${f.stack}, monospace` }}
+                className={`px-3 py-2 rounded border text-[12px] transition-all text-left ${
+                  fontId === f.id ? "border-primary bg-primary/10 text-primary" : "border-border text-foreground hover:border-foreground/30"
+                }`}
+              >
+                <div>Aa Bb 123</div>
+                <div className="text-[8px] font-mono text-muted-foreground/50 mt-0.5 uppercase tracking-wide" style={{ fontFamily: "var(--font-mono)" }}>{f.name}</div>
+              </button>
             ))}
           </div>
         </div>

@@ -2,9 +2,11 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 import { initTheme } from "./lib/themes";
+import { initFont } from "./lib/fonts";
 
 // Restore user preferences (theme first, then per-property overrides)
 initTheme();
+initFont();
 const savedAccent = localStorage.getItem("echo_accent");
 if (savedAccent) document.documentElement.style.setProperty("--primary", savedAccent);
 const savedFontSize = localStorage.getItem("echo_fontsize");

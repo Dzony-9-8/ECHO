@@ -106,7 +106,7 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono), 'JetBrains Mono', monospace;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -378,4 +378,8 @@
 /* Misc */
 .no-scanlines .scanline { display: none !important; }
 
-:root { --chat-font-size: 14px; }
+:root {
+  --chat-font-size: 14px;
+  --font-mono: 'JetBrains Mono';
+  --font-display: 'Share Tech Mono';
+}
