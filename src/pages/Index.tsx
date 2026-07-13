@@ -1,7 +1,8 @@
-import { useState, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import AppSidebar, { type ViewType } from "@/components/AppSidebar";
 import TopBar from "@/components/TopBar";
 import ChatView from "@/components/ChatView";
+import { tickReminders } from "@/lib/reminders";
 
 const WorkflowView = lazy(() => import("@/components/WorkflowView"));
 const MemoryView = lazy(() => import("@/components/MemoryView"));
@@ -28,6 +29,7 @@ const CalendarView = lazy(() => import("@/components/CalendarView"));
 const ThemesView = lazy(() => import("@/components/ThemesView"));
 const ContactsView = lazy(() => import("@/components/ContactsView"));
 const DiagnosticsView = lazy(() => import("@/components/DiagnosticsView"));
+const RemindersView = lazy(() => import("@/components/RemindersView"));
 
 const LazyFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -65,7 +67,15 @@ const Index = () => {
     themes: "Themes",
     contacts: "Contacts",
     diagnostics: "Diagnostics",
+    reminders: "Reminders",
   };
+
+  // App-wide reminder engine — fires due reminders regardless of the active view.
+  useEffect(() => {
+    tickReminders();
+    const id = setInterval(() => tickReminders(), 20000);
+    return () => clearInterval(id);
+  }, []);
 
   const handlePromptSelect = (prompt: string) => {
     setActiveView("chat");
@@ -104,6 +114,7 @@ const Index = () => {
           {activeView === "themes" && <ThemesView />}
           {activeView === "contacts" && <ContactsView />}
           {activeView === "diagnostics" && <DiagnosticsView />}
+          {activeView === "reminders" && <RemindersView />}
         </Suspense>
       </main>
     </div>
