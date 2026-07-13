@@ -26,6 +26,7 @@ const DocumentsView = lazy(() => import("@/components/DocumentsView"));
 const GalleryView = lazy(() => import("@/components/GalleryView"));
 const CalendarView = lazy(() => import("@/components/CalendarView"));
 const ThemesView = lazy(() => import("@/components/ThemesView"));
+const ContactsView = lazy(() => import("@/components/ContactsView"));
 
 const LazyFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -61,6 +62,7 @@ const Index = () => {
     gallery: "Gallery",
     calendar: "Calendar",
     themes: "Themes",
+    contacts: "Contacts",
   };
 
   const handlePromptSelect = (prompt: string) => {
@@ -98,6 +100,7 @@ const Index = () => {
           {activeView === "gallery" && <GalleryView />}
           {activeView === "calendar" && <CalendarView />}
           {activeView === "themes" && <ThemesView />}
+          {activeView === "contacts" && <ContactsView />}
         </Suspense>
       </main>
     </div>
