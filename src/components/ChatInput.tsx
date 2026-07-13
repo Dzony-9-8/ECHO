@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Mic, MicOff, Paperclip, X, FileText, Layers, Image as ImageIcon, Wand2, PhoneCall } from "lucide-react";
+import { Send, Mic, MicOff, Paperclip, X, FileText, Layers, Image as ImageIcon, Wand2, PhoneCall, Smile } from "lucide-react";
 import {
   type FileAttachment,
   getFileType,
@@ -13,6 +13,9 @@ import { sendMessage, getBackendUrl } from "@/lib/api";
 import ModelSelector, { getSelectedModel } from "./ModelSelector";
 import PromptTemplates from "./PromptTemplates";
 import SlashCommandMenu, { type SlashCommand } from "./SlashCommandMenu";
+import EmojiPicker from "./EmojiPicker";
+import EmojiAutocomplete from "./EmojiAutocomplete";
+import { searchEmoji, type Emoji } from "@/lib/emoji";
 
 interface Props {
   onSend: (message: string, files?: FileAttachment[], depth?: number, model?: string, images?: string[]) => void;
@@ -47,13 +50,27 @@ const ChatInput = ({ onSend, disabled }: Props) => {
   const [isListening, setIsListening] = useState(false);
   const [isIntercomActive, setIsIntercomActive] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [emojiQuery, setEmojiQuery] = useState("");   // active ":shortcode" query
+  const [emojiStart, setEmojiStart] = useState(-1);   // index of the ":" in input
   const [isFixing, setIsFixing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const emojiWrapRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  // Close the emoji picker on click outside its button+popup wrapper.
+  useEffect(() => {
+    if (!showEmoji) return;
+    const onDown = (e: MouseEvent) => {
+      if (emojiWrapRef.current && !emojiWrapRef.current.contains(e.target as Node)) setShowEmoji(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [showEmoji]);
 
   const speechSupported = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 
@@ -232,6 +249,48 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     textareaRef.current?.focus();
   };
 
+  // Detect an active ":shortcode" being typed before the caret.
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInput(val);
+    const caret = e.target.selectionStart ?? val.length;
+    const m = val.slice(0, caret).match(/:([\w+-]{1,})$/);
+    if (m) { setEmojiQuery(m[1]); setEmojiStart(caret - m[0].length); }
+    else { setEmojiQuery(""); setEmojiStart(-1); }
+  };
+
+  const emojiAcVisible = emojiStart >= 0 && emojiQuery.length > 0 && searchEmoji(emojiQuery, 1).length > 0;
+
+  // Insert an emoji at the caret (picker button).
+  const insertEmoji = (char: string) => {
+    const el = textareaRef.current;
+    const start = el?.selectionStart ?? input.length;
+    const end = el?.selectionEnd ?? start;
+    const next = input.slice(0, start) + char + input.slice(end);
+    setInput(next);
+    setShowEmoji(false);
+    requestAnimationFrame(() => {
+      const pos = start + char.length;
+      el?.setSelectionRange(pos, pos);
+      el?.focus();
+    });
+  };
+
+  // Replace the typed ":shortcode" with the chosen emoji (autocomplete).
+  const completeShortcode = (emoji: Emoji) => {
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? input.length;
+    const next = input.slice(0, emojiStart) + emoji.char + input.slice(caret);
+    setInput(next);
+    setEmojiQuery("");
+    setEmojiStart(-1);
+    requestAnimationFrame(() => {
+      const pos = emojiStart + emoji.char.length;
+      el?.setSelectionRange(pos, pos);
+      el?.focus();
+    });
+  };
+
   const addFiles = useCallback(async (fileList: FileList | File[]) => {
     const newFiles: FileAttachment[] = [];
     for (const file of Array.from(fileList)) {
@@ -283,8 +342,8 @@ const ChatInput = ({ onSend, disabled }: Props) => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Don't handle Enter when slash menu is open (it handles its own)
-    if (showSlashMenu && (e.key === "Enter" || e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    // Don't handle these keys when the slash or emoji menu is open (they handle their own)
+    if ((showSlashMenu || emojiAcVisible) && (e.key === "Enter" || e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp")) {
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
@@ -438,6 +497,20 @@ const ChatInput = ({ onSend, disabled }: Props) => {
         >
           <Wand2 className={`w-4 h-4 ${isFixing ? "animate-pulse" : ""}`} />
         </button>
+
+        {/* Emoji */}
+        <div ref={emojiWrapRef} className="relative">
+          <button
+            onClick={() => setShowEmoji((s) => !s)}
+            disabled={disabled}
+            className="p-2.5 rounded border border-terminal-amber bg-terminal-amber/10 text-terminal-amber hover:bg-terminal-amber/20 transition-colors disabled:opacity-30"
+            title="Insert emoji (or type :shortcode:)"
+          >
+            <Smile className="w-4 h-4" />
+          </button>
+          <EmojiPicker open={showEmoji} onSelect={insertEmoji} onClose={() => setShowEmoji(false)} />
+        </div>
+
         <input
           ref={fileInputRef}
           type="file"
@@ -456,11 +529,19 @@ const ChatInput = ({ onSend, disabled }: Props) => {
             onClose={() => setShowSlashMenu(false)}
           />
 
+          {/* Emoji :shortcode: autocomplete */}
+          <EmojiAutocomplete
+            query={emojiQuery}
+            visible={emojiAcVisible}
+            onSelect={completeShortcode}
+            onClose={() => { setEmojiQuery(""); setEmojiStart(-1); }}
+          />
+
           <div className="absolute left-3 top-3 text-primary text-sm glow-green select-none">{">"}_</div>
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={files.length > 0 ? "Describe what to do with these files..." : "Enter command or type / for commands..."}
             disabled={disabled}
