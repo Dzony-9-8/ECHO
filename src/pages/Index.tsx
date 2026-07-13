@@ -2,6 +2,7 @@ import { useState, useEffect, lazy, Suspense } from "react";
 import AppSidebar, { type ViewType } from "@/components/AppSidebar";
 import TopBar from "@/components/TopBar";
 import ChatView from "@/components/ChatView";
+import OnboardingTour from "@/components/OnboardingTour";
 import { tickReminders } from "@/lib/reminders";
 
 const WorkflowView = lazy(() => import("@/components/WorkflowView"));
@@ -84,6 +85,7 @@ const Index = () => {
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
+      <OnboardingTour />
       <TopBar viewLabel={viewLabels[activeView]} />
       <main className="flex-1 flex overflow-hidden">
         <AppSidebar activeView={activeView} onViewChange={setActiveView} />

@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Palette, Check, RotateCcw, Type, ScanLine, CaseSensitive } from "lucide-react";
+import { Palette, Check, RotateCcw, Type, ScanLine, CaseSensitive, Compass } from "lucide-react";
 import { toast } from "sonner";
 import { THEMES, type Theme, getSavedThemeId, setTheme } from "@/lib/themes";
 import { FONTS, getSavedFontId, setFont } from "@/lib/fonts";
+import { startOnboarding } from "@/lib/onboarding";
 
 const hsl = (v: string) => `hsl(${v})`;
 const FONT_SIZES = [
@@ -156,6 +157,16 @@ const ThemesView = () => {
               className={`px-3 py-1.5 rounded border text-[10px] font-mono transition-all ${
                 scanlines ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground"}`}>
               {scanlines ? "On" : "Off"}
+            </button>
+          </div>
+
+          <div>
+            <div className="flex items-center gap-1.5 text-[9px] font-mono text-muted-foreground/50 uppercase tracking-widest mb-2">
+              <Compass className="w-3 h-3" /> Onboarding
+            </div>
+            <button onClick={startOnboarding}
+              className="px-3 py-1.5 rounded border border-border text-[10px] font-mono text-muted-foreground hover:text-foreground hover:border-terminal-cyan/50 transition-all">
+              Replay tour
             </button>
           </div>
         </div>
