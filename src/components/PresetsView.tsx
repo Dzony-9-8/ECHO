@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   SlidersHorizontal, TerminalSquare, Database, Plus, Trash2, Play, Pencil,
-  Check, X, Download, Upload,
+  Check, X, Download, Upload, Archive,
 } from "lucide-react";
+import { exportAll, importAll, backupCounts } from "@/lib/backup";
 import { fetchLocalModels } from "@/lib/api";
 import { toast } from "sonner";
 import {
@@ -13,7 +14,7 @@ import {
   type CustomSlashCommand, loadCustomSlash, upsertCustomSlash, deleteCustomSlash, normalizeSlashName,
 } from "@/lib/slashCommands";
 
-type Tab = "presets" | "slash" | "sessions";
+type Tab = "presets" | "slash" | "sessions" | "backup";
 
 const BUILTIN_SLASH = ["summarize", "translate", "code-review", "explain", "todos", "rewrite", "brainstorm", "security"];
 
@@ -60,7 +61,9 @@ const PresetsView = () => {
   const [customCmds, setCustomCmds] = useState<CustomSlashCommand[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [convCount, setConvCount] = useState(0);
+  const [backup, setBackup] = useState<{ keys: number; images: number }>({ keys: 0, images: 0 });
   const fileRef = useRef<HTMLInputElement>(null);
+  const backupFileRef = useRef<HTMLInputElement>(null);
 
   // Editors
   const [editingPreset, setEditingPreset] = useState<Preset | null>(null);
@@ -70,8 +73,23 @@ const PresetsView = () => {
     setPresets(loadPresets());
     setCustomCmds(loadCustomSlash());
     setConvCount(conversationCount());
+    backupCounts().then(setBackup).catch(() => {});
     fetchLocalModels().then((m) => setModels(m.filter((x) => x.type !== "embedding").map((x) => x.name))).catch(() => {});
   }, []);
+
+  const doExportAll = async () => {
+    const r = await exportAll();
+    toast.success(`Backed up ${r.keys} settings + ${r.images} image(s)`);
+  };
+  const doImportAll = async (file: File) => {
+    try {
+      const r = await importAll(file);
+      backupCounts().then(setBackup).catch(() => {});
+      toast.success(`Restored ${r.keys} settings + ${r.images} image(s) — reload to apply`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Restore failed");
+    }
+  };
 
   // ── Presets ──────────────────────────────────────────────────────────────────
   const startNewPreset = () =>
@@ -149,6 +167,7 @@ const PresetsView = () => {
     { id: "presets", label: "Presets", icon: SlidersHorizontal },
     { id: "slash", label: "Slash Commands", icon: TerminalSquare },
     { id: "sessions", label: "Sessions", icon: Database },
+    { id: "backup", label: "Backup", icon: Archive },
   ];
 
   return (
@@ -311,6 +330,41 @@ const PresetsView = () => {
               </div>
               <p className="text-[9px] font-mono text-muted-foreground/50">
                 Export downloads a JSON backup. Import merges conversations by id (existing ones with the same id are overwritten).
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Backup (everything) ── */}
+        {tab === "backup" && (
+          <div className="space-y-4 max-w-2xl">
+            <p className="text-[11px] font-mono text-muted-foreground">
+              Full backup of <strong>everything</strong> ECHO stores in this browser — settings, presets, slash
+              commands, notes, tasks, events, contacts, documents, theme/font, and generated images.
+            </p>
+            <div className="border border-border rounded bg-card p-4 space-y-3">
+              <div className="text-[11px] font-mono text-foreground">
+                {backup.keys} setting{backup.keys !== 1 ? "s" : ""} · {backup.images} gallery image{backup.images !== 1 ? "s" : ""}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={doExportAll}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-primary/50 bg-primary/10 text-primary text-[10px] font-mono hover:bg-primary/20 transition-all">
+                  <Download className="w-3.5 h-3.5" /> Export backup
+                </button>
+                <button onClick={() => backupFileRef.current?.click()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-terminal-amber/50 bg-terminal-amber/10 text-terminal-amber text-[10px] font-mono hover:bg-terminal-amber/20 transition-all">
+                  <Upload className="w-3.5 h-3.5" /> Restore
+                </button>
+                <input
+                  ref={backupFileRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) doImportAll(f); e.target.value = ""; }}
+                />
+              </div>
+              <p className="text-[9px] font-mono text-muted-foreground/50">
+                Restore overwrites matching settings and adds gallery images. Reload the app afterwards to apply.
               </p>
             </div>
           </div>
