@@ -148,6 +148,15 @@ const DiagnosticsView = () => {
   const [lastRun, setLastRun] = useState<Date | null>(null);
   const [auto, setAuto] = useState(true);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Guards against setState after unmount — 4 probes + a 5s interval can resolve
+  // after the view is switched away.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const probe = useCallback(
     async <T,>(
@@ -161,13 +170,16 @@ const DiagnosticsView = () => {
         const to = setTimeout(() => ctrl.abort(), 6000);
         const res = await fetch(`${base}${path}`, { signal: ctrl.signal });
         clearTimeout(to);
+        if (!alive.current) return;
         if (!res.ok) {
           set({ state: "down", data: null, error: `HTTP ${res.status}` });
           return;
         }
         const data = (await res.json()) as T;
+        if (!alive.current) return;
         set({ state: evaluate(data), data, error: null });
       } catch (e) {
+        if (!alive.current) return;
         set({
           state: "down",
           data: null,

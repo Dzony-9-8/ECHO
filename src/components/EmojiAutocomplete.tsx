@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { searchEmoji, type Emoji } from "@/lib/emoji";
 
 interface Props {
@@ -30,12 +30,12 @@ const EmojiAutocomplete = ({ query, visible, onSelect, onClose }: Props) => {
 
   if (!visible || matches.length === 0) return null;
 
+  // Plain conditional render (enter animation only) — same rationale as
+  // EmojiPicker: AnimatePresence's exit path jams unmount under React 18.3.
   return (
-    <AnimatePresence>
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: 8 }}
         className="absolute bottom-full left-10 mb-1 w-56 max-h-56 overflow-y-auto rounded border border-border bg-card shadow-xl z-50"
       >
         {matches.map((e, i) => (
@@ -52,7 +52,6 @@ const EmojiAutocomplete = ({ query, visible, onSelect, onClose }: Props) => {
           </button>
         ))}
       </motion.div>
-    </AnimatePresence>
   );
 };
 
