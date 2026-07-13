@@ -29,6 +29,7 @@ import {
   CalendarDays,
   Palette,
   Contact,
+  Stethoscope,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
@@ -58,7 +59,8 @@ export type ViewType =
   | "gallery"
   | "calendar"
   | "themes"
-  | "contacts";
+  | "contacts"
+  | "diagnostics";
 
 interface Props {
   activeView: ViewType;
@@ -97,6 +99,7 @@ const navItems: {
   { id: "calendar",   icon: CalendarDays, label: "Calendar", color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
   { id: "themes",     icon: Palette,    label: "Themes",     color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
   { id: "contacts",   icon: Contact,    label: "Contacts",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "diagnostics", icon: Stethoscope, label: "Diagnostics", color: "text-terminal-amber", glow: "hsl(38 90% 55%)" },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {
