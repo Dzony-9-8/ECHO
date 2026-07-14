@@ -5391,6 +5391,37 @@ async def fetch_url_tool(request: FetchUrlRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── MCP server reachability probe ─────────────────────────────────────────────
+# Honest, read-only: checks whether a configured HTTP/SSE MCP endpoint responds.
+# Does NOT launch stdio servers or execute anything — that stays out of scope.
+
+class MCPProbeRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/mcp/probe")
+async def mcp_probe(request: MCPProbeRequest):
+    """Server-side reachability check for an HTTP/SSE MCP endpoint (no CORS limits)."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(request.url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Only http/https URLs can be probed")
+    client = await get_external_client()
+    started = time.time()
+    try:
+        # A GET is the most compatible; many MCP/SSE endpoints reject HEAD.
+        resp = await client.get(request.url, timeout=httpx.Timeout(6.0, connect=4.0))
+        return {
+            "reachable": True,
+            "status": resp.status_code,
+            "latency_ms": round((time.time() - started) * 1000),
+        }
+    except httpx.TimeoutException:
+        return {"reachable": False, "error": "timeout"}
+    except Exception as e:
+        return {"reachable": False, "error": type(e).__name__}
+
+
 # ── v3.8: Wikipedia search tool ───────────────────────────────────────────────
 
 class WikipediaRequest(BaseModel):
