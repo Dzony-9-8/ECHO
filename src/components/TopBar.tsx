@@ -1,6 +1,7 @@
-import { Terminal, Wifi, WifiOff, Sun, Moon, Zap } from "lucide-react";
+import { Terminal, Wifi, WifiOff, Sun, Moon, Zap, Keyboard } from "lucide-react";
 import { useState, useEffect } from "react";
 import { checkHealth } from "@/lib/api";
+import { openShortcuts } from "@/lib/shortcuts";
 import { useTheme } from "@/hooks/useTheme";
 import SystemMetrics from "./SystemMetrics";
 import LocalStatusBar from "./LocalStatusBar";
@@ -59,6 +60,14 @@ const TopBar = ({ viewLabel }: Props) => {
         <LocalStatusBar />
         <SystemMetrics />
         <div className="w-px h-4 bg-border" />
+
+        <button
+          onClick={openShortcuts}
+          className="p-1.5 rounded transition-all text-muted-foreground hover:text-foreground hover:bg-muted/50 active:scale-95"
+          title="Keyboard shortcuts (?)"
+        >
+          <Keyboard className="w-3.5 h-3.5" />
+        </button>
 
         <button
           onClick={toggleTheme}
