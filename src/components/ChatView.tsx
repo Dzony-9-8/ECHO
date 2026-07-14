@@ -23,6 +23,7 @@ import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 import { saveBranch, getParentBranch } from "@/lib/branches";
 import { getConversationSystemPrompt, setConversationSystemPrompt } from "@/lib/conversationSystemPrompts";
 import { buildSkillsPrompt } from "@/lib/agentSkills";
+import { buildProfilePrompt } from "@/lib/aboutMe";
 import { setAgentActive, setAgentComplete, resetAllAgents } from "@/lib/agentStatus";
 
 const WELCOME_MSG: ChatMessageType = {
@@ -226,13 +227,15 @@ const ChatView = () => {
     setShowCanvas(true);
   }, []);
 
-  // Determine the effective system prompt for the current conversation
+  // Determine the effective system prompt for the current conversation.
+  // The personal "About me" profile (if enabled) is prepended so every
+  // response is personalized, without overriding an explicit system prompt.
   const getEffectiveSystemPrompt = useCallback((): string => {
-    if (activeConversationId) {
-      const perConv = getConversationSystemPrompt(activeConversationId);
-      if (perConv) return perConv;
-    }
-    return systemPrompt;
+    const base = activeConversationId
+      ? getConversationSystemPrompt(activeConversationId) || systemPrompt
+      : systemPrompt;
+    const profile = buildProfilePrompt();
+    return [profile, base].filter(Boolean).join("\n\n");
   }, [activeConversationId, systemPrompt]);
 
   const doSend = async (

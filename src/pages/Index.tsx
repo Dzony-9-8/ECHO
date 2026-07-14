@@ -33,6 +33,7 @@ const ContactsView = lazy(() => import("@/components/ContactsView"));
 const DiagnosticsView = lazy(() => import("@/components/DiagnosticsView"));
 const RemindersView = lazy(() => import("@/components/RemindersView"));
 const GroupChatView = lazy(() => import("@/components/GroupChatView"));
+const AboutMeView = lazy(() => import("@/components/AboutMeView"));
 
 const LazyFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -72,6 +73,7 @@ const Index = () => {
     diagnostics: "Diagnostics",
     reminders: "Reminders",
     groupchat: "Group Chat",
+    aboutme: "About Me",
   };
 
   // App-wide reminder engine — fires due reminders regardless of the active view.
@@ -122,6 +124,7 @@ const Index = () => {
           {activeView === "diagnostics" && <DiagnosticsView />}
           {activeView === "reminders" && <RemindersView />}
           {activeView === "groupchat" && <GroupChatView />}
+          {activeView === "aboutme" && <AboutMeView />}
         </Suspense>
       </main>
     </div>

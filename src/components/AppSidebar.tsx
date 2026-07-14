@@ -32,6 +32,7 @@ import {
   Stethoscope,
   BellRing,
   Users,
+  UserCircle,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
@@ -64,7 +65,8 @@ export type ViewType =
   | "contacts"
   | "diagnostics"
   | "reminders"
-  | "groupchat";
+  | "groupchat"
+  | "aboutme";
 
 interface Props {
   activeView: ViewType;
@@ -106,6 +108,7 @@ const navItems: {
   { id: "diagnostics", icon: Stethoscope, label: "Diagnostics", color: "text-terminal-amber", glow: "hsl(38 90% 55%)" },
   { id: "reminders",  icon: BellRing,    label: "Reminders",  color: "text-terminal-amber",   glow: "hsl(38 90% 55%)"  },
   { id: "groupchat",  icon: Users,       label: "Group Chat", color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "aboutme",    icon: UserCircle,  label: "About Me",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {
