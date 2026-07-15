@@ -6576,11 +6576,19 @@ async def autonomous_reset():
 
 
 def _find_dist_dir() -> Path | None:
-    """Locate the frontend dist/ directory."""
-    candidates = [
-        _BASE / "dist",
-        Path(__file__).resolve().parent / "dist",
-    ]
+    """Locate the frontend dist/ to serve.
+
+    Frozen: PyInstaller bundles backend/dist as <_MEIPASS>/dist (build_exe.py).
+    Dev: prefer the project-root dist/ — that's what `npm run build` writes.
+    backend/dist/ is only a packaging artifact refreshed by build_exe.py, so
+    preferring it in dev served a stale UI. (Both candidates previously resolved
+    to backend/dist, so the root build was never even considered.)
+    """
+    here = Path(__file__).resolve().parent
+    if getattr(sys, "frozen", False):
+        candidates = [_BASE / "dist"]
+    else:
+        candidates = [here.parent / "dist", here / "dist"]
     for d in candidates:
         if d.exists() and (d / "index.html").exists():
             return d
