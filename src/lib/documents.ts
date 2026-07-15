@@ -1,4 +1,10 @@
-// Documents — a small writing-first document store persisted locally.
+// Documents — a small writing-first document store.
+//
+// Drafts live on the backend (<writable>/data/documents.json) when it's
+// reachable, so they survive a browser clear. When it isn't, we fall back to
+// localStorage and the UI says so — we never pretend a draft was saved to disk.
+
+import { getBackendUrl } from "@/lib/api";
 
 export interface Doc {
   id: string;
@@ -6,6 +12,9 @@ export interface Doc {
   content: string;
   updatedAt: number;
 }
+
+/** Where the drafts currently being edited actually live. */
+export type StorageMode = "server" | "local";
 
 const KEY = "echo_documents";
 
@@ -33,6 +42,45 @@ export const deleteDoc = (id: string): Doc[] => {
 
 export const sortDocs = (docs: Doc[]): Doc[] =>
   [...docs].sort((a, b) => b.updatedAt - a.updatedAt);
+
+// ── Server-side drafts (/api/drafts) ─────────────────────────────────────────
+// Namespaced /api/drafts, not /api/documents — the latter is the RAG ingestion API.
+
+const draftsUrl = () => `${getBackendUrl()}/api/drafts`;
+
+const withTimeout = async (input: string, init: RequestInit = {}, ms = 5000): Promise<Response> => {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(input, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+};
+
+/** List server drafts. Throws when the backend is unreachable (caller falls back to local). */
+export const remoteListDocs = async (): Promise<Doc[]> => {
+  const res = await withTimeout(draftsUrl());
+  if (!res.ok) throw new Error(`drafts list failed (${res.status})`);
+  const data = await res.json();
+  return Array.isArray(data.documents) ? data.documents : [];
+};
+
+export const remoteUpsertDoc = async (doc: Doc): Promise<Doc> => {
+  const res = await withTimeout(draftsUrl(), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(doc),
+  });
+  if (!res.ok) throw new Error(`draft save failed (${res.status})`);
+  return (await res.json()).document;
+};
+
+export const remoteDeleteDoc = async (id: string): Promise<void> => {
+  const res = await withTimeout(`${draftsUrl()}/${encodeURIComponent(id)}`, { method: "DELETE" });
+  // 404 means it's already gone — treat as success rather than blocking the UI.
+  if (!res.ok && res.status !== 404) throw new Error(`draft delete failed (${res.status})`);
+};
 
 export const wordCount = (text: string): number =>
   (text.trim().match(/\S+/g) || []).length;

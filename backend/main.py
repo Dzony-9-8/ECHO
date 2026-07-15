@@ -142,6 +142,7 @@ import model_advisor
 from model_advisor import check_model_outdated
 import odysseus_updates
 import image_gen
+import documents_store
 
 _hindsight = HindsightMemory()
 _reme = ContextCompactor()
@@ -5420,6 +5421,44 @@ async def mcp_probe(request: MCPProbeRequest):
         return {"reachable": False, "error": "timeout"}
     except Exception as e:
         return {"reachable": False, "error": type(e).__name__}
+
+
+# ── Server-side document drafts ───────────────────────────────────────────────
+# Drafts persisted under <writable>/data/documents.json so they survive a browser
+# clear. The frontend falls back to local drafts (and says so) when unreachable.
+#
+# NOTE: deliberately namespaced /api/drafts — /api/documents already belongs to
+# the RAG ingestion API (POST ingest, GET /list, DELETE /{id}). Reusing that path
+# would have shadowed those routes.
+
+class DraftIn(BaseModel):
+    id: Optional[str] = None
+    title: Optional[str] = ""
+    content: Optional[str] = ""
+    updatedAt: Optional[int] = None
+
+
+@app.get("/api/drafts")
+def drafts_list():
+    """All server-side drafts, newest first."""
+    docs = documents_store.load_all(get_writable_path())
+    docs.sort(key=lambda d: d.get("updatedAt", 0), reverse=True)
+    return {"documents": docs}
+
+
+@app.put("/api/drafts")
+def drafts_upsert(doc: DraftIn):
+    """Create or update a draft."""
+    saved = documents_store.upsert(get_writable_path(), doc.model_dump())
+    return {"document": saved}
+
+
+@app.delete("/api/drafts/{doc_id}")
+def drafts_delete(doc_id: str):
+    """Delete a draft. 404 when it doesn't exist."""
+    if not documents_store.delete(get_writable_path(), doc_id):
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"deleted": doc_id}
 
 
 # ── v3.8: Wikipedia search tool ───────────────────────────────────────────────

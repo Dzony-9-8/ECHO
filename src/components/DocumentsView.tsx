@@ -8,8 +8,9 @@ import { sendMessage, getBackendMode, type ChatMessage } from "@/lib/api";
 import { getSelectedModel } from "@/components/ModelSelector";
 import { toast } from "sonner";
 import {
-  type Doc, type AiAction,
+  type Doc, type AiAction, type StorageMode,
   loadDocs, upsertDoc, deleteDoc, sortDocs, wordCount, exportDoc, buildAiPrompt, newId,
+  remoteListDocs, remoteUpsertDoc, remoteDeleteDoc,
 } from "@/lib/documents";
 
 const AI_ACTIONS: { id: AiAction; label: string; icon: typeof Sparkles }[] = [
@@ -31,14 +32,32 @@ const DocumentsView = () => {
   const [customInstruction, setCustomInstruction] = useState("");
   const [showExport, setShowExport] = useState(false);
 
+  // Where drafts actually live. null = still probing the backend.
+  const [storage, setStorage] = useState<StorageMode | null>(null);
+
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aiRunId = useRef(0);
   const mode = getBackendMode();
 
+  // Server drafts survive a browser clear; fall back to local (and say so).
   useEffect(() => {
-    const d = sortDocs(loadDocs());
-    setDocs(d);
-    if (d.length > 0) selectDoc(d[0]);
+    let alive = true;
+    (async () => {
+      try {
+        const remote = sortDocs(await remoteListDocs());
+        if (!alive) return;
+        setStorage("server");
+        setDocs(remote);
+        if (remote.length > 0) selectDoc(remote[0]);
+      } catch {
+        if (!alive) return;
+        const local = sortDocs(loadDocs());
+        setStorage("local");
+        setDocs(local);
+        if (local.length > 0) selectDoc(local[0]);
+      }
+    })();
+    return () => { alive = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectDoc = (d: Doc) => {
@@ -49,15 +68,29 @@ const DocumentsView = () => {
     setAiAction(null);
   };
 
-  const createDoc = () => {
+  const createDoc = async () => {
     const d: Doc = { id: newId(), title: "Untitled", content: "", updatedAt: Date.now() };
-    setDocs(sortDocs(upsertDoc(d)));
+    if (storage === "server") {
+      setDocs((prev) => sortDocs([d, ...prev]));
+      try { await remoteUpsertDoc(d); }
+      catch (e) { toast.error(`Couldn't save to server: ${e instanceof Error ? e.message : "error"}`); }
+    } else {
+      setDocs(sortDocs(upsertDoc(d)));
+    }
     selectDoc(d);
   };
 
-  const removeDoc = (id: string) => {
-    const remaining = sortDocs(deleteDoc(id));
-    setDocs(remaining);
+  const removeDoc = async (id: string) => {
+    let remaining: Doc[];
+    if (storage === "server") {
+      remaining = sortDocs(docs.filter((d) => d.id !== id));
+      setDocs(remaining);
+      try { await remoteDeleteDoc(id); }
+      catch (e) { toast.error(`Couldn't delete on server: ${e instanceof Error ? e.message : "error"}`); }
+    } else {
+      remaining = sortDocs(deleteDoc(id));
+      setDocs(remaining);
+    }
     if (activeId === id) {
       if (remaining.length > 0) selectDoc(remaining[0]);
       else { setActiveId(null); setTitle(""); setContent(""); }
@@ -69,11 +102,17 @@ const DocumentsView = () => {
   const persist = useCallback((nextTitle: string, nextContent: string) => {
     if (!activeId) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      const updated = upsertDoc({ id: activeId, title: nextTitle, content: nextContent, updatedAt: Date.now() });
-      setDocs(sortDocs(updated));
+    saveTimer.current = setTimeout(async () => {
+      const next: Doc = { id: activeId, title: nextTitle, content: nextContent, updatedAt: Date.now() };
+      if (storage === "server") {
+        setDocs((prev) => sortDocs(prev.map((d) => (d.id === activeId ? next : d))));
+        try { await remoteUpsertDoc(next); }
+        catch (e) { toast.error(`Autosave failed: ${e instanceof Error ? e.message : "server error"}`); }
+      } else {
+        setDocs(sortDocs(upsertDoc(next)));
+      }
     }, 500);
-  }, [activeId]);
+  }, [activeId, storage]);
 
   const onTitle = (v: string) => { setTitle(v); persist(v, content); };
   const onContent = (v: string) => { setContent(v); persist(title, v); };
@@ -266,7 +305,19 @@ const DocumentsView = () => {
               <span>{words} words</span>
               <span>{chars} chars</span>
               <div className="flex-1" />
-              <span>AI edits use the selected chat model{mode === "cloud" ? " (Cloud)" : " (Local)"} · autosaved locally</span>
+              {/* Say plainly where the draft actually lives. */}
+              {storage === "server" ? (
+                <span className="text-primary" title="Drafts are saved on the backend and survive a browser clear">
+                  ● autosaved to server
+                </span>
+              ) : storage === "local" ? (
+                <span className="text-terminal-amber" title="Backend unreachable — drafts are only in this browser">
+                  ● backend offline · saved in this browser only
+                </span>
+              ) : (
+                <span>checking storage…</span>
+              )}
+              <span>AI edits use the selected chat model{mode === "cloud" ? " (Cloud)" : " (Local)"}</span>
             </div>
           </>
         )}
