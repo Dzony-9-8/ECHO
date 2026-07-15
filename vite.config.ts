@@ -20,8 +20,24 @@ export default defineConfig(({ mode }) => ({
     dedupe: ["react", "react-dom", "react/jsx-runtime"],
   },
   optimizeDeps: {
-    include: ["react", "react-dom", "react/jsx-runtime", "recharts"],
-    force: true,
+    // Pre-bundle everything the lazy-loaded views pull in. If a dep is only
+    // discovered when a view is first opened, Vite re-optimizes mid-session and
+    // reloads, which is what produced the transient "Invalid hook call" blanks.
+    include: [
+      "react",
+      "react-dom",
+      "react/jsx-runtime",
+      "recharts",
+      "framer-motion",
+      "lucide-react",
+      "sonner",
+      "react-router-dom",
+      "@tanstack/react-query",
+      "@supabase/supabase-js",
+    ],
+    // No `force: true` — it re-bundled deps on every dev start, minting a fresh
+    // ?v= hash each time for no benefit. Vite invalidates the cache on its own
+    // when lockfile/config change.
   },
   build: {
     target: "esnext",
