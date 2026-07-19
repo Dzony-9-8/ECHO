@@ -4877,6 +4877,25 @@ async def recommend_models_endpoint():
     return await model_advisor.recommend_models(vram_gb, ram_gb, client, _logger)
 
 
+@app.get("/api/models/installed")
+async def models_installed():
+    """The set of models Ollama actually has locally (for Cookbook install badges).
+
+    Reuses the existing SSE pull endpoint (/api/models/pull, {model}) for downloads —
+    this just reports what's already present so the UI can show installed/available.
+    """
+    names = await get_loaded_models()
+    ollama_up = bool(names)
+    if not ollama_up:
+        try:
+            c = await get_ollama_client()
+            r = await c.get(f"{OLLAMA_URL}/api/tags", timeout=4.0)
+            ollama_up = r.status_code == 200
+        except Exception:
+            ollama_up = False
+    return {"installed": names, "ollama": ollama_up}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Odysseus Update Checker — advisory only (surfaces upstream changes, never applies)
 # ─────────────────────────────────────────────────────────────────────────────
