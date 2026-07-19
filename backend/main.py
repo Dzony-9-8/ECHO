@@ -143,6 +143,7 @@ from model_advisor import check_model_outdated
 import odysseus_updates
 import image_gen
 import documents_store
+import youtube_tools
 
 _hindsight = HindsightMemory()
 _reme = ContextCompactor()
@@ -5417,6 +5418,21 @@ async def fetch_url_tool(request: FetchUrlRequest):
 
 class MCPProbeRequest(BaseModel):
     url: str
+
+
+# ── YouTube tools ─────────────────────────────────────────────────────────────
+# Real metadata (oEmbed) + captions (page caption tracks). No API key, no extra
+# deps. Honest: a video without captions returns transcript.available = false.
+
+class YouTubeRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/youtube")
+async def youtube_fetch(request: YouTubeRequest):
+    """Fetch a YouTube video's metadata and transcript."""
+    client = await get_external_client()
+    return await youtube_tools.fetch_video(client, request.url)
 
 
 @app.post("/api/mcp/probe")

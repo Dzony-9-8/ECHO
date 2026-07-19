@@ -35,6 +35,7 @@ import {
   UserCircle,
   ImageDown,
   Plug,
+  Youtube,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
@@ -70,7 +71,8 @@ export type ViewType =
   | "groupchat"
   | "aboutme"
   | "imageeditor"
-  | "mcp";
+  | "mcp"
+  | "youtube";
 
 interface Props {
   activeView: ViewType;
@@ -115,6 +117,7 @@ const navItems: {
   { id: "aboutme",    icon: UserCircle,  label: "About Me",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
   { id: "imageeditor", icon: ImageDown,  label: "Image Editor", color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
   { id: "mcp",        icon: Plug,        label: "MCP Servers", color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "youtube",    icon: Youtube,     label: "YouTube",    color: "text-terminal-red",     glow: "hsl(0 70% 55%)"   },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {
