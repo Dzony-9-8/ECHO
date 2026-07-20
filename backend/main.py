@@ -6904,7 +6904,7 @@ if __name__ == "__main__":
             "fastapi", "uvicorn", "httpx", "pydantic", "chromadb", "ollama",
             "psutil", "bs4", "trafilatura", "lxml", "pdfplumber", "docx",
             "duckduckgo_search", "rank_bm25", "faster_whisper", "pyttsx3",
-            "yt_dlp", "webview",
+            "yt_dlp", "webview", "cryptography",
         ]
         for mod in REQUIRED:
             try:
