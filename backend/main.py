@@ -41,7 +41,11 @@ Endpoints:
 Run:
     cd backend
     pip install -r requirements.txt
-    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+
+Binds loopback only: ECHO has no authentication, so anything reachable on the
+port is fully readable. Set ECHO_ALLOW_LAN=1 to expose it on the network
+deliberately (and understand that it is unauthenticated when you do).
 """
 
 import asyncio
@@ -404,11 +408,30 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ECHO Local Backend", version="3.3.0", lifespan=lifespan)
 
+# ── Network exposure ─────────────────────────────────────────────────────────
+# ECHO is a local-first app with NO authentication: every endpoint is reachable
+# by anyone who can open the port. It used to bind 0.0.0.0 with wildcard CORS,
+# which put chats, documents and drafts in reach of the whole local network —
+# on shared wifi, that is everyone. Default to loopback and require an explicit
+# opt-in for LAN access.
+_ALLOW_LAN = os.environ.get("ECHO_ALLOW_LAN", "").strip().lower() in ("1", "true", "yes")
+BIND_HOST = os.environ.get("ECHO_HOST") or ("0.0.0.0" if _ALLOW_LAN else "127.0.0.1")
+
+# Same reasoning for CORS: a wildcard lets any website you visit script requests
+# against localhost:8000 and read the responses. Only ECHO's own dev servers and
+# the packaged app's own origin need access.
+_DEV_PORTS = (8000, 8080, 5173, 4173, 3000)
+_ALLOWED_ORIGINS = [
+    f"http://{host}:{port}"
+    for host in ("localhost", "127.0.0.1")
+    for port in _DEV_PORTS
+]
+
 # GZip disabled — it buffers SSE streams and kills real-time token delivery
 # app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"] if _ALLOW_LAN else _ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -6970,6 +6993,12 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[cleanup] Port scan failed (non-fatal): {e}")
 
+    if BIND_HOST == "127.0.0.1":
+        print("[startup] Binding 127.0.0.1 (this machine only)")
+    else:
+        print(f"[startup] WARNING: binding {BIND_HOST} — ECHO has no "
+              "authentication, so anyone who can reach this port has full access")
+
     print("[startup] Checking for stale processes on port %d..." % APP_PORT)
     _kill_old_port_users(APP_PORT)
     # Brief pause to let the OS release the socket
@@ -6977,7 +7006,7 @@ if __name__ == "__main__":
 
     # ── Start uvicorn in a background thread ─────────────────────────────
     def _start_server():
-        uvicorn.run(app, host="0.0.0.0", port=APP_PORT, log_level="info")
+        uvicorn.run(app, host=BIND_HOST, port=APP_PORT, log_level="info")
 
     server_thread = threading.Thread(target=_start_server, daemon=True)
     server_thread.start()
