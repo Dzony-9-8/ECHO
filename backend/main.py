@@ -47,6 +47,7 @@ Run:
 import asyncio
 import hashlib
 import json
+import importlib
 import logging
 import logging.handlers
 import mimetypes
@@ -6868,6 +6869,50 @@ async def process_file(req: FileProcessRequest):
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # ── --selftest: verify the bundle before anything else ────────────────
+    # PyInstaller happily produces an exe that starts fine but is missing a
+    # dependency it never saw (lazy imports, or a package absent from the build
+    # env). Those failures only surface when a user hits the feature. This runs
+    # inside the frozen exe, so it checks what actually shipped.
+    if "--selftest" in sys.argv:
+        failures: list[str] = []
+
+        REQUIRED = [
+            "fastapi", "uvicorn", "httpx", "pydantic", "chromadb", "ollama",
+            "psutil", "bs4", "trafilatura", "lxml", "pdfplumber", "docx",
+            "duckduckgo_search", "rank_bm25", "faster_whisper", "pyttsx3",
+            "yt_dlp", "webview",
+        ]
+        for mod in REQUIRED:
+            try:
+                importlib.import_module(mod)
+            except Exception as e:
+                failures.append(f"import {mod}: {type(e).__name__}: {e}")
+
+        # yt-dlp resolves extractors through importlib, so a successful
+        # `import yt_dlp` does NOT prove the extractors got bundled.
+        try:
+            from yt_dlp.extractor import get_info_extractor
+            get_info_extractor("Youtube")
+        except Exception as e:
+            failures.append(f"yt_dlp Youtube extractor: {type(e).__name__}: {e}")
+
+        # Bundled frontend
+        try:
+            d = _find_dist_dir()
+            if not d or not (Path(d) / "index.html").exists():
+                failures.append(f"frontend dist/index.html not found (dist={d})")
+        except Exception as e:
+            failures.append(f"dist lookup: {type(e).__name__}: {e}")
+
+        if failures:
+            print("SELFTEST FAILED")
+            for f in failures:
+                print(f"  - {f}")
+            sys.exit(1)
+        print(f"SELFTEST OK ({len(REQUIRED)} modules, extractors, frontend)")
+        sys.exit(0)
+
     import signal
     import subprocess
     import threading

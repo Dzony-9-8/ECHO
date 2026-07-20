@@ -51,7 +51,10 @@ def fail(msg: str):
     """Print error and wait for keypress before exiting."""
     print(f"\n[FAIL] {msg}")
     print()
-    input("Press Enter to close...")
+    try:
+        input("Press Enter to close...")
+    except EOFError:
+        pass  # non-interactive shell / CI
     sys.exit(1)
 
 
@@ -73,6 +76,21 @@ def main():
         ECHO Portable Exe Builder  v3.7
     =============================================
     """)
+
+    # ── Step 0: Sync dependencies into the build interpreter ──────────────
+    # PyInstaller bundles what it finds in THIS interpreter, not what
+    # requirements.txt lists. Skipping this yields an exe that builds cleanly
+    # and fails at runtime on whatever was added since the last build.
+    if "--skip-deps" in sys.argv:
+        print("[SKIP] Dependency sync (--skip-deps)")
+    else:
+        run(
+            [get_python(), "-m", "pip", "install", "-q",
+             "-r", str(BACKEND_DIR / "requirements.txt")],
+            cwd=PROJECT_ROOT,
+            description=f"Syncing dependencies into {get_python()}",
+        )
+        print("[OK] Dependencies in sync with requirements.txt")
 
     # ── Step 1: Build frontend ────────────────────────────────────────────
     run(
@@ -227,7 +245,11 @@ def main():
         "--exclude-module", "scipy",
         "--exclude-module", "sklearn",
         "--exclude-module", "pandas",
-        "--exclude-module", "numpy",
+        # NOTE: numpy must NOT be excluded — chromadb, rank_bm25 and
+        # faster_whisper all import it. It was excluded here for a long time and
+        # got bundled anyway, pulled in as a hook dependency of the heavy libs
+        # that were leaking into the build. Once those stopped leaking, the
+        # exclude took effect and silently broke RAG, BM25 and voice.
         "--exclude-module", "PIL",
         "--exclude-module", "cv2",
         "--exclude-module", "jupyter",
@@ -276,7 +298,45 @@ def main():
 
     size_mb = exe_path.stat().st_size / (1024 * 1024)
 
-    # ── Step 6: Cleanup build artifacts ───────────────────────────────────
+    # A healthy build is ~140 MB. A large jump means a heavy library (torch is
+    # the repeat offender) got pulled in via a hook — --exclude-module does not
+    # stop that, so the fix is a clean build env, not more excludes.
+    SIZE_CEILING_MB = 400
+    if size_mb > SIZE_CEILING_MB:
+        fail(
+            f"ECHO.exe is {size_mb:.0f} MB, over the {SIZE_CEILING_MB} MB ceiling.\n"
+            "       A heavy dependency was bundled. Build from a clean venv:\n"
+            "         python -m venv .venv-build\n"
+            "         .venv-build/Scripts/python.exe -m pip install -r backend/requirements.txt\n"
+            "         .venv-build/Scripts/python.exe build_exe.py"
+        )
+
+    # ── Step 7: Smoke-test the frozen exe ─────────────────────────────────
+    # Runs --selftest inside the real bundle, so it catches modules that were
+    # missing from the build env or lost to lazy imports. A build that only
+    # checks "the file exists" has shipped broken features before.
+    print(f"\n{'='*50}")
+    print("  Smoke-testing the built exe (--selftest)")
+    print(f"{'='*50}\n")
+    try:
+        proc = subprocess.run(
+            [str(exe_path), "--selftest"],
+            capture_output=True, text=True, timeout=300,
+        )
+        print((proc.stdout or "").strip() or "(no output)")
+        if proc.returncode != 0:
+            print((proc.stderr or "").strip()[:2000])
+            fail(
+                "Self-test failed — the exe is missing something it needs.\n"
+                "       If a module is absent, install it into the build env and\n"
+                "       rebuild; if it imports here but not in the exe, it needs a\n"
+                "       --hidden-import or --collect-submodules entry."
+            )
+    except subprocess.TimeoutExpired:
+        fail("Self-test timed out after 300s")
+    print("[OK] Self-test passed")
+
+    # ── Step 8: Cleanup build artifacts ───────────────────────────────────
     build_temp = PROJECT_ROOT / "build_temp"
     if build_temp.exists():
         shutil.rmtree(build_temp, ignore_errors=True)
@@ -315,10 +375,18 @@ def main():
 
 
 if __name__ == "__main__":
+    status = 0
     try:
         main()
+    except SystemExit as e:          # fail() already reported the reason
+        status = e.code or 0
     except Exception as e:
         print(f"\n[ERROR] {e}")
+        status = 1
     finally:
         print()
-        input("Press Enter to close...")
+        try:
+            input("Press Enter to close...")
+        except EOFError:
+            pass  # non-interactive shell / CI
+    sys.exit(status)
