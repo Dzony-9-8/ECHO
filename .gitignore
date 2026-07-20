@@ -52,3 +52,6 @@ OPTIMIZATION_REPORT.pdf
 
 # Claude Code workspace
 .claude/
+
+# local build venv (clean interpreter for build_exe.py)
+.venv-build/
