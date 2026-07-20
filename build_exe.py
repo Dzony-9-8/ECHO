@@ -215,6 +215,10 @@ def main():
         "--distpath", str(BUILD_OUTPUT),
         "--workpath", str(PROJECT_ROOT / "build_temp"),
         "--specpath", str(PROJECT_ROOT / "build_temp"),
+        # yt-dlp resolves extractors lazily through importlib, so PyInstaller's
+        # static analysis never sees them. Without this the exe imports fine but
+        # fails at runtime with "Unsupported URL".
+        "--collect-submodules", "yt_dlp",
         # Exclude heavy ML libs that are not used at runtime
         "--exclude-module", "torch",
         "--exclude-module", "torchvision",

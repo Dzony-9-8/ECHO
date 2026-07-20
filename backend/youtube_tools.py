@@ -1,19 +1,34 @@
-"""YouTube tools — fetch real video metadata and captions with no extra deps.
+"""YouTube tools — fetch real video metadata and captions.
 
-Metadata comes from YouTube's public oEmbed endpoint (no API key). Transcripts
-are read from the caption tracks embedded in the watch page (the same source
-youtube-transcript-api uses) and parsed from the timedtext XML. Everything is
-real; when a video has no captions we say so rather than inventing a transcript.
+Two transcript paths, tried in order:
+
+1. **yt-dlp** (primary). It runs YouTube's player handshake, so the timedtext
+   URLs it hands back carry the ``pot``/``ei`` params that plain scraping can't
+   produce. We only use it to *resolve* URLs and metadata — the caption body is
+   fetched with our own async httpx client, which avoids yt-dlp's temp-file
+   writing and the 429s it triggers when asked for many languages at once.
+2. **Watch-page scrape** (fallback). No extra deps; works when YouTube isn't
+   demanding a proof-of-origin token.
+
+Metadata falls back to the public oEmbed endpoint. Everything is real: when a
+video has no captions, or YouTube refuses to serve them, we say exactly that
+rather than inventing a transcript.
 """
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 import re
 from typing import Any, Optional
 
 import httpx
+
+try:  # optional dependency — the scrape fallback still works without it
+    import yt_dlp  # type: ignore
+except Exception:  # pragma: no cover - exercised only on installs without it
+    yt_dlp = None  # type: ignore
 
 _ID_PATTERNS = [
     re.compile(r"(?:v=|/v/|youtu\.be/|/embed/|/shorts/)([0-9A-Za-z_-]{11})"),
@@ -169,17 +184,160 @@ async def fetch_transcript(client: httpx.AsyncClient, video_id: str) -> dict[str
     }
 
 
+# ── yt-dlp path ───────────────────────────────────────────────────────────────
+
+def _parse_json3(raw: str) -> list[dict[str, Any]]:
+    """Parse timedtext json3 into segments. Returns [] if it isn't json3."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+    segments: list[dict[str, Any]] = []
+    for ev in data.get("events") or []:
+        segs = ev.get("segs")
+        if not segs:
+            continue
+        text = "".join(s.get("utf8", "") for s in segs).replace("\n", " ").strip()
+        if not text:
+            continue
+        segments.append({
+            "start": round((ev.get("tStartMs") or 0) / 1000.0, 2),
+            "dur": round((ev.get("dDurationMs") or 0) / 1000.0, 2),
+            "text": text,
+        })
+    return segments
+
+
+def _ytdlp_extract(video_id: str) -> dict[str, Any]:
+    """Blocking yt-dlp metadata+caption-URL extraction. Caller runs it in a thread."""
+    opts = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "socket_timeout": 20,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore[union-attr]
+        return ydl.extract_info(
+            f"https://www.youtube.com/watch?v={video_id}", download=False
+        )
+
+
+def _pick_track(info: dict[str, Any]) -> tuple[Optional[str], Optional[str], str, list[str]]:
+    """Choose the best caption track. Returns (url, lang, kind, all_languages)."""
+    manual = info.get("subtitles") or {}
+    auto = info.get("automatic_captions") or {}
+    languages = sorted(set(manual) | set(auto))
+
+    def english_first(langs: dict[str, Any]) -> list[str]:
+        return sorted(langs, key=lambda l: (not l.lower().startswith("en"), l))
+
+    # Manual captions beat auto-generated ones; English beats everything else.
+    for source, kind in ((manual, "manual"), (auto, "auto-generated")):
+        for lang in english_first(source):
+            formats = source.get(lang) or []
+            # json3 is the cheapest to parse; vtt/srv1 are the usual fallbacks.
+            for ext in ("json3", "srv1", "vtt"):
+                for f in formats:
+                    if f.get("ext") == ext and f.get("url"):
+                        return f["url"], lang, kind, languages
+    return None, None, "", languages
+
+
+async def fetch_via_ytdlp(client: httpx.AsyncClient, video_id: str) -> dict[str, Any]:
+    """Resolve metadata + transcript through yt-dlp. Returns {} if it can't."""
+    if yt_dlp is None:
+        return {}
+    try:
+        info = await asyncio.to_thread(_ytdlp_extract, video_id)
+    except Exception as e:
+        return {"_error": f"{type(e).__name__}: {e}"}
+    if not isinstance(info, dict):
+        return {}
+
+    metadata = {
+        "title": info.get("title"),
+        "author": info.get("channel") or info.get("uploader"),
+        "author_url": info.get("channel_url") or info.get("uploader_url"),
+        "thumbnail": info.get("thumbnail"),
+        "duration": info.get("duration"),
+    }
+
+    url, lang, kind, languages = _pick_track(info)
+    if not url:
+        return {
+            "metadata": metadata,
+            "transcript": {
+                "available": False,
+                "languages": languages,
+                "reason": "this video has no caption tracks",
+            },
+        }
+
+    try:
+        r = await client.get(url, headers={"Referer": "https://www.youtube.com/"}, timeout=20.0)
+        raw = r.text
+    except Exception as e:
+        return {
+            "metadata": metadata,
+            "transcript": {
+                "available": False,
+                "languages": languages,
+                "reason": f"could not fetch the caption track ({type(e).__name__})",
+            },
+        }
+
+    segments = _parse_json3(raw) or _parse_timedtext(raw)
+    if not segments:
+        # Let the caller fall through to the scrape path rather than giving up.
+        return {"metadata": metadata, "transcript": {}}
+
+    return {
+        "metadata": metadata,
+        "transcript": {
+            "available": True,
+            "lang": lang,
+            "languages": languages,
+            "kind": kind,
+            "source": "yt-dlp",
+            "segments": segments,
+            "text": " ".join(s["text"] for s in segments),
+        },
+    }
+
+
 async def fetch_video(client: httpx.AsyncClient, url: str) -> dict[str, Any]:
     """Top-level: resolve a URL to {video_id, url, metadata, transcript}."""
     video_id = parse_video_id(url)
     if not video_id:
         return {"error": "Could not parse a YouTube video ID from that URL."}
     canonical = f"https://www.youtube.com/watch?v={video_id}"
-    metadata = await fetch_metadata(client, canonical)
-    transcript = await fetch_transcript(client, video_id)
+
+    # Primary: yt-dlp. It performs the player handshake, so its timedtext URLs
+    # carry the proof-of-origin params that a plain scrape cannot produce.
+    primary = await fetch_via_ytdlp(client, video_id)
+    metadata = primary.get("metadata") or {}
+    transcript = primary.get("transcript") or {}
+    if transcript.get("available"):
+        return {
+            "video_id": video_id,
+            "url": canonical,
+            "metadata": metadata,
+            "transcript": transcript,
+        }
+
+    # Fallback: scrape the watch page. Also covers a missing/broken yt-dlp.
+    scraped = await fetch_transcript(client, video_id)
+    if not scraped.get("available") and transcript.get("reason"):
+        # yt-dlp saw the caption inventory directly; trust its verdict over the
+        # scrape's, which can't tell "no captions" from "token required".
+        scraped = {**scraped, **transcript}
+    if not metadata.get("title"):
+        metadata = await fetch_metadata(client, canonical)
+
     return {
         "video_id": video_id,
         "url": canonical,
         "metadata": metadata,
-        "transcript": transcript,
+        "transcript": scraped,
     }
