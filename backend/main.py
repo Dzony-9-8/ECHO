@@ -54,6 +54,7 @@ import os
 import platform
 import re
 import socket
+import subprocess
 import sys
 import time
 from collections import OrderedDict
@@ -2643,30 +2644,82 @@ class SkillToolsRequest(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _gpu_info_via_nvidia_smi() -> dict | None:
+    """Query nvidia-smi directly.
+
+    Fallback for when GPUtil is missing or broken — it's unmaintained and simply
+    absent in some environments. Reporting "no GPU" is not harmless: it silently
+    disables the VRAM scheduler and makes the Cookbook recommend models as if the
+    machine were CPU-only, which is how a 14B model ends up thrashing an 11GB card.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.used,utilization.gpu,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if out.returncode != 0 or not out.stdout.strip():
+            return None
+        # First GPU only, matching the GPUtil path.
+        parts = [p.strip() for p in out.stdout.strip().splitlines()[0].split(",")]
+        if len(parts) < 5:
+            return None
+        return {
+            "name": parts[0],
+            "vram_total_mb": int(float(parts[1])),
+            "vram_used_mb": int(float(parts[2])),
+            "gpu_usage_percent": float(parts[3]),
+            "temperature_c": float(parts[4]),
+        }
+    except Exception:
+        return None
+
+
 def get_gpu_info() -> dict | None:
     global _gpu_cache
     now = time.time()
     if now - _gpu_cache["ts"] < _GPU_CACHE_TTL:
         return _gpu_cache["data"]
+
+    result: dict | None = None
     try:
         import GPUtil
         gpus = GPUtil.getGPUs()
-        if not gpus:
-            _gpu_cache = {"data": None, "ts": now}
-            return None
-        gpu = gpus[0]
-        result = {
-            "name": gpu.name,
-            "vram_total_mb": int(gpu.memoryTotal),
-            "vram_used_mb": int(gpu.memoryUsed),
-            "gpu_usage_percent": round(gpu.load * 100, 1),
-            "temperature_c": gpu.temperature,
-        }
-        _gpu_cache = {"data": result, "ts": now}
-        return result
+        if gpus:
+            gpu = gpus[0]
+            result = {
+                "name": gpu.name,
+                "vram_total_mb": int(gpu.memoryTotal),
+                "vram_used_mb": int(gpu.memoryUsed),
+                "gpu_usage_percent": round(gpu.load * 100, 1),
+                "temperature_c": gpu.temperature,
+            }
     except Exception:
-        _gpu_cache = {"data": None, "ts": now}
-        return None
+        result = None
+
+    if result is None:
+        result = _gpu_info_via_nvidia_smi()
+
+    _gpu_cache = {"data": result, "ts": now}
+    return result
+
+
+def gpu_layer_options() -> dict:
+    """GPU offload options for Ollama.
+
+    We deliberately do NOT pin `num_gpu`. Ollama measures free VRAM and picks how
+    many layers fit; hardcoding `num_gpu: 99` overrides that and forces a full
+    offload even when the model is far larger than the card. On an 11GB GPU with a
+    ~15GB model that turns a 5-second reply into minutes of thrashing. Letting
+    Ollama decide is both faster and safer across different hardware.
+    """
+    return {}
 
 
 def get_cpu_temp() -> float | None:
@@ -2746,7 +2799,6 @@ async def ollama_stream(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
-            "num_gpu": 99,
             "num_keep": 256,  # v3.5: KV cache reuse — keep first 256 tokens (system prompt)
         },
         "keep_alive": "10m",
@@ -2831,7 +2883,7 @@ async def ollama_chat_json(messages: list[dict], model: str | None = None) -> di
         "messages": messages,
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.3, "num_predict": 512, "num_gpu": 99, "num_keep": 256},
+        "options": {"temperature": 0.3, "num_predict": 512, "num_keep": 256},
         "keep_alive": "10m",
     }
 
@@ -2878,7 +2930,6 @@ async def ollama_chat_text(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
-            "num_gpu": 99,
             "num_keep": 256,  # v3.5: KV cache reuse
         },
         "keep_alive": "10m",
@@ -2914,7 +2965,6 @@ async def ollama_chat_stream_tokens(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
-            "num_gpu": 99,
             "num_keep": 256,
         },
         "keep_alive": "10m",
