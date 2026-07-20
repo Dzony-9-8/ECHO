@@ -60,6 +60,38 @@ def _parse_pull_count(raw: str) -> int:
         return 0
 
 
+_SIZE_RE = re.compile(r">\s*(\d+(?:\.\d+)?)\s*([bBmM])\s*<")
+_PULLS_RE = re.compile(r">\s*([\d.]+\s*[KMB]?)\s*</span>\s*<span[^>]*>\s*(?:&nbsp;|\s)*Pulls", re.I)
+
+
+def _extract_sizes(block: str) -> list[str]:
+    """Parameter sizes advertised on a library card, e.g. ["8b", "70b", "405b"].
+
+    Matched on content shape rather than CSS classes: ollama.com dropped the
+    x-test-size hooks these were originally scraped from, and its Tailwind
+    classes churn. A standalone span whose text is `<number><b|m>` is a size
+    badge; capability badges ("tools", "vision") can't match this pattern.
+
+    Only the region *before* the stats line is scanned — the pull count renders
+    as e.g. "117.3M" and would otherwise be misread as a 117.3-million-parameter
+    size (it was, on the first pass).
+    """
+    stats = _PULLS_RE.search(block)
+    region = block[: stats.start()] if stats else block
+    out: list[str] = []
+    for num, unit in _SIZE_RE.findall(region):
+        s = f"{num}{unit.lower()}"
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def _extract_pulls(block: str) -> int:
+    """Pull count from a library card, anchored on the visible "Pulls" label."""
+    m = _PULLS_RE.search(block)
+    return _parse_pull_count(m.group(1).strip()) if m else 0
+
+
 async def _scan_ollama(client: httpx.AsyncClient, logger) -> list[dict[str, Any]]:
     """Scrapes ollama.com/library for popular native models (name + pull count)."""
     out: list[dict[str, Any]] = []
@@ -75,11 +107,9 @@ async def _scan_ollama(client: httpx.AsyncClient, logger) -> list[dict[str, Any]
             if not name or "/" in name or name in seen:
                 continue
             seen.add(name)
-            pulls_match = re.search(r"x-test-pull-count>([^<]+)<", block)
-            pulls = _parse_pull_count(pulls_match.group(1)) if pulls_match else 0
+            pulls = _extract_pulls(block)
             fam, ver = _parse_family_version(name)
-            # Parameter sizes advertised for this model (e.g. "1b", "8b", "70b").
-            sizes = re.findall(r"x-test-size[^>]*>([^<]+)<", block)
+            sizes = _extract_sizes(block)
             out.append({
                 "id": name, "source": "ollama", "downloads": pulls,
                 "last_modified": "", "family": fam, "version": ver,
