@@ -149,6 +149,7 @@ from model_advisor import check_model_outdated
 import odysseus_updates
 import image_gen
 import documents_store
+import vault
 import youtube_tools
 
 _hindsight = HindsightMemory()
@@ -5507,6 +5508,82 @@ async def youtube_fetch(request: YouTubeRequest):
     """Fetch a YouTube video's metadata and transcript."""
     client = await get_external_client()
     return await youtube_tools.fetch_video(client, request.url)
+
+
+# ── Vault ─────────────────────────────────────────────────────────────────────
+# Metadata only. There is deliberately NO endpoint that returns a secret value:
+# values are substituted server-side at point of use via vault.resolve(), so a
+# request that reaches this API cannot extract one. Keep it that way — adding a
+# reveal endpoint would undo the design, not extend it.
+#
+# Passphrases arrive in POST bodies, never in a URL or query string, so they
+# stay out of access logs, browser history and Referer headers.
+
+class VaultPassphraseRequest(BaseModel):
+    passphrase: str
+
+
+class VaultSecretRequest(BaseModel):
+    name: str
+    value: str
+
+
+def _vault_error(e: Exception) -> HTTPException:
+    """vault.VaultError messages are written to be user-facing and leak nothing."""
+    if isinstance(e, vault.VaultLocked):
+        return HTTPException(status_code=423, detail=str(e))   # 423 Locked
+    return HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/vault/status")
+async def vault_status():
+    """Whether a vault exists, whether it is unlocked, and the names in it."""
+    return vault.status(get_writable_path())
+
+
+@app.post("/api/vault/create")
+async def vault_create(request: VaultPassphraseRequest):
+    try:
+        vault.create(get_writable_path(), request.passphrase)
+    except vault.VaultError as e:
+        raise _vault_error(e)
+    return vault.status(get_writable_path())
+
+
+@app.post("/api/vault/unlock")
+async def vault_unlock(request: VaultPassphraseRequest):
+    try:
+        vault.unlock(get_writable_path(), request.passphrase)
+    except vault.VaultError as e:
+        raise _vault_error(e)
+    return vault.status(get_writable_path())
+
+
+@app.post("/api/vault/lock")
+async def vault_lock():
+    vault.lock()
+    return vault.status(get_writable_path())
+
+
+@app.put("/api/vault/secret")
+async def vault_set_secret(request: VaultSecretRequest):
+    """Store or replace a secret. Returns metadata only — never the value."""
+    try:
+        vault.set_secret(get_writable_path(), request.name, request.value)
+    except vault.VaultError as e:
+        raise _vault_error(e)
+    return vault.status(get_writable_path())
+
+
+@app.delete("/api/vault/secret/{name}")
+async def vault_delete_secret(name: str):
+    try:
+        removed = vault.delete_secret(get_writable_path(), name)
+    except vault.VaultError as e:
+        raise _vault_error(e)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"No secret named {name!r}.")
+    return vault.status(get_writable_path())
 
 
 @app.post("/api/mcp/probe")

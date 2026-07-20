@@ -279,6 +279,20 @@ def test_status_shape_locked_and_unlocked():
     assert (s["exists"], s["unlocked"], s["count"], s["names"]) == (True, False, 0, [])
 
 
+def test_deleting_the_file_locks_the_vault():
+    """Stale in-memory state must not outlive the file it belongs to."""
+    base = fresh()
+    vault.create(base, PASS)
+    vault.set_secret(base, "k", "v")
+    assert vault.status(base)["unlocked"] is True
+
+    vault.vault_path(base).unlink()
+    s = vault.status(base)
+    assert s["exists"] is False
+    assert s["unlocked"] is False, "must not report unlocked with no vault on disk"
+    assert s["names"] == []
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]

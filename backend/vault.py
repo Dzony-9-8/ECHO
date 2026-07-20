@@ -276,6 +276,12 @@ def list_names() -> list[str]:
 
 
 def status(base: Path) -> dict[str, Any]:
+    # The file can vanish underneath a running instance — deleted by hand,
+    # replaced by a restore, or lost to a sync conflict. Holding a key for a
+    # vault that no longer exists would report `unlocked` for nothing, so
+    # reconcile with the disk rather than trusting memory.
+    if _key is not None and not exists(base):
+        lock()
     unlocked = is_unlocked()
     return {
         "exists": exists(base),
