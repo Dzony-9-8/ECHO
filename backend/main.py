@@ -2188,6 +2188,59 @@ async def architect_brief(task: str, model: str) -> str:
         return ""
 
 
+async def committee_brief(prior_output: str, model: str) -> str:
+    """Review pre-pass for the Critic agent: correctness and quality, in parallel.
+
+    Returns "" when there is nothing to review -- the April version defaulted a
+    missing dependency result to "" and reviewed that, spending two calls to
+    produce a brief about nothing.
+    """
+    if not prior_output.strip():
+        return ""
+
+    excerpt = prior_output[:800]
+    reviewer_msgs = [
+        {
+            "role": "system",
+            "content": (
+                "You are a Code Reviewer. Check for correctness, logic errors, "
+                "missing cases. Be concise. Never repeat yourself."
+            ),
+        },
+        {"role": "user", "content": f"Review this output for correctness:\n{excerpt}"},
+    ]
+    auditor_msgs = [
+        {
+            "role": "system",
+            "content": (
+                "You are a Quality Auditor. Check for clarity, completeness, "
+                "best practices. Be concise. Never repeat yourself."
+            ),
+        },
+        {"role": "user", "content": f"Audit this output for quality:\n{excerpt}"},
+    ]
+    try:
+        reviewer, auditor = await asyncio.wait_for(
+            asyncio.gather(
+                ollama_chat_text(
+                    reviewer_msgs, model=model,
+                    max_tokens=SUBTEAM_MAX_TOKENS["Reviewer"],
+                    extra_options=SUBTEAM_OLLAMA_OPTIONS,
+                ),
+                ollama_chat_text(
+                    auditor_msgs, model=model,
+                    max_tokens=SUBTEAM_MAX_TOKENS["Auditor"],
+                    extra_options=SUBTEAM_OLLAMA_OPTIONS,
+                ),
+            ),
+            timeout=25,   # the April version had no timeout on this gather
+        )
+        return f"[Reviewer]\n{reviewer}\n\n[Auditor]\n{auditor}"
+    except Exception as e:
+        _logger.warning(f"[committee_brief] Failed, continuing without it: {e}")
+        return ""
+
+
 async def run_pipeline(
     plan: TaskPlan,
     system_prompt: str,

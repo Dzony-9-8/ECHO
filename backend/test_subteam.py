@@ -96,6 +96,60 @@ def test_architect_brief_returns_empty_on_failure():
     assert got == ""
 
 
+# ── committee_brief ──────────────────────────────────────────────────────────
+
+def test_committee_brief_combines_both_roles():
+    got = with_chat(fake_chat("finding"),
+                    lambda: main.committee_brief("def f(): pass", "llama3.2:3b"))
+    assert "[Reviewer]" in got
+    assert "[Auditor]" in got
+    assert got.count("finding") == 2
+
+
+def test_committee_brief_runs_its_two_roles_in_parallel():
+    """Serial execution would take ~0.4s; parallel should be ~0.2s."""
+    started = time.monotonic()
+    with_chat(fake_chat("finding", delay=0.2),
+              lambda: main.committee_brief("def f(): pass", "llama3.2:3b"))
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.35, f"took {elapsed:.2f}s -- roles ran serially"
+
+
+def test_committee_brief_uses_the_reviewer_and_auditor_budgets():
+    calls = []
+    with_chat(fake_chat(record=calls),
+              lambda: main.committee_brief("def f(): pass", "llama3.2:3b"))
+    assert len(calls) == 2
+    assert {c["max_tokens"] for c in calls} == {main.SUBTEAM_MAX_TOKENS["Reviewer"],
+                                                main.SUBTEAM_MAX_TOKENS["Auditor"]}
+    for c in calls:
+        assert c["extra_options"] == main.SUBTEAM_OLLAMA_OPTIONS
+
+
+def test_committee_brief_skips_entirely_without_prior_output():
+    """The April version reviewed the empty string, spending two calls to
+    produce a brief about nothing."""
+    calls = []
+    got = with_chat(fake_chat(record=calls),
+                    lambda: main.committee_brief("", "llama3.2:3b"))
+    assert got == ""
+    assert calls == [], "no prior output means no committee calls"
+
+
+def test_committee_brief_truncates_long_prior_output():
+    calls = []
+    with_chat(fake_chat(record=calls),
+              lambda: main.committee_brief("x" * 5000, "llama3.2:3b"))
+    for c in calls:
+        assert len(c["messages"][1]["content"]) < 1000
+
+
+def test_committee_brief_returns_empty_on_failure():
+    got = with_chat(fake_chat(fail=True),
+                    lambda: main.committee_brief("def f(): pass", "llama3.2:3b"))
+    assert got == ""
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]
