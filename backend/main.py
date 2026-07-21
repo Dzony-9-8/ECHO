@@ -1685,6 +1685,52 @@ AGENT_MAX_TOKENS: dict[str, int] = {
 }
 
 
+# Per-agent Ollama sampling. Same idea as AGENT_MAX_TOKENS above, applied to
+# how each role samples rather than how much it emits: Planner and Critic are
+# near-deterministic, Developer stays focused, Researcher and Supervisor get
+# some latitude, and every role carries a repeat_penalty so nothing rambles.
+#
+# Deliberately no num_gpu here — ac10f5f removed the forced full-GPU offload
+# because it was the main cause of pathological first-token latency. Layer
+# placement stays Ollama's decision.
+AGENT_OLLAMA_OPTIONS: dict[str, dict] = {
+    "Planner": {
+        "num_ctx":        2048,   # JSON decomposition needs tiny context → faster TTFT
+        "repeat_penalty": 1.1,
+        "top_k":          10,
+        "top_p":          0.9,
+    },
+    "Researcher": {
+        "num_ctx":        4096,
+        "repeat_penalty": 1.15,   # strong — prevent repetitive analysis
+        "top_k":          40,
+        "top_p":          0.92,
+    },
+    "Developer": {
+        "num_ctx":        8192,   # large — long implementations need full context
+        "repeat_penalty": 1.08,   # mild — code repeats structurally
+        "top_k":          20,
+        "top_p":          0.95,
+    },
+    "Critic": {
+        "num_ctx":        4096,
+        "repeat_penalty": 1.1,
+        "top_k":          20,
+        "top_p":          0.9,
+    },
+    "Supervisor": {
+        "num_ctx":        8192,   # must see all agent results
+        "repeat_penalty": 1.15,   # strong — synthesis must not echo inputs verbatim
+        "top_k":          40,
+        "top_p":          0.92,
+    },
+    "default": {
+        "num_ctx":        4096,
+        "repeat_penalty": 1.1,
+    },
+}
+
+
 class Subtask(BaseModel):
     id: str
     agent: str
@@ -1874,7 +1920,11 @@ async def run_subtask(
     subtask_success = False
     try:
         result = await asyncio.wait_for(
-            ollama_chat_text(messages, model=model, temperature=temperature, max_tokens=effective_max_tokens),
+            ollama_chat_text(
+                messages, model=model, temperature=temperature,
+                max_tokens=effective_max_tokens,
+                extra_options=AGENT_OLLAMA_OPTIONS.get(agent, AGENT_OLLAMA_OPTIONS["default"]),
+            ),
             timeout=120,
         )
         subtask_success = bool(result and len(result.strip()) > 0)
@@ -2944,20 +2994,27 @@ async def ollama_chat_text(
     model: str | None = None,
     temperature: float = 0.7,
     max_tokens: int = 2048,
+    extra_options: dict | None = None,
 ) -> str:
     """Non-streaming Ollama call. Returns plain text response.
     v3.5: num_keep=256 for KV cache reuse across multi-turn calls.
+
+    extra_options: per-agent sampling overrides (num_ctx, repeat_penalty,
+    top_k, top_p). Applied last, so a caller can override the defaults below.
     """
     model = model or AGENT_MODEL_MAP.get("default", "llama3.1:8b")
+    options = {
+        "temperature": temperature,
+        "num_predict": max_tokens,
+        "num_keep": 256,  # v3.5: KV cache reuse
+    }
+    if extra_options:
+        options.update(extra_options)
     payload = {
         "model": model,
         "messages": messages,
         "stream": False,
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-            "num_keep": 256,  # v3.5: KV cache reuse
-        },
+        "options": options,
         "keep_alive": "10m",
     }
 
