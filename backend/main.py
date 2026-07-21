@@ -3281,27 +3281,29 @@ import contextlib
 
 
 def _execute_code_in_process(code: str, result_queue: multiprocessing.Queue):
-    """Run code in isolated subprocess with restricted globals."""
+    """Run restricted Python in this isolated child process.
+
+    The child applies OS resource limits where available, then a static check
+    rejects imports and underscore access, then the code runs against a fixed
+    safe-builtins namespace. See code_sandbox for what this does and does not
+    guarantee — it is a restriction layer plus process isolation, not a jail.
+    """
+    import code_sandbox
+
+    code_sandbox.apply_resource_limits()
+
+    try:
+        code_sandbox.check_code(code)
+    except code_sandbox.UnsafeCode as e:
+        # Rejected before running — the dangerous call never happened.
+        result_queue.put({"success": False, "stdout": "", "stderr": f"Blocked: {e}"})
+        return
+
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
-    safe_globals = {
-        "__builtins__": __builtins__,
-        "print": print, "range": range, "len": len,
-        "list": list, "dict": dict, "set": set, "tuple": tuple,
-        "int": int, "float": float, "str": str, "bool": bool,
-        "abs": abs, "sum": sum, "min": min, "max": max,
-        "enumerate": enumerate, "zip": zip, "round": round,
-        "sorted": sorted, "reversed": reversed, "map": map, "filter": filter,
-        "divmod": divmod, "pow": pow,
-        "math": __import__("math"),
-        "json": __import__("json"),
-        "re": __import__("re"),
-        "random": __import__("random"),
-        "datetime": __import__("datetime"),
-    }
     try:
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
-            exec(code, safe_globals)
+            exec(compile(code, "<sandbox>", "exec"), code_sandbox.safe_globals())
         result_queue.put({"success": True, "stdout": stdout_buf.getvalue(), "stderr": stderr_buf.getvalue()})
     except Exception as e:
         result_queue.put({"success": False, "stdout": stdout_buf.getvalue(), "stderr": str(e)})
@@ -4706,10 +4708,14 @@ class RunCodeRequest(BaseModel):
 
 @app.post("/api/run-code")
 async def api_run_code(req: RunCodeRequest):
-    """Execute Python code in a sandboxed subprocess.
+    """Execute restricted Python in an isolated subprocess.
 
-    Returns stdout, stderr, success flag. Timeout max 30s.
-    Allowed imports: math, json, re, random, datetime (no file system or network).
+    Returns stdout, stderr, success flag. Timeout max 30s. Imports are refused;
+    the namespace pre-loads math, json, re, random and datetime. Underscore
+    attribute access and the dangerous builtins are blocked, so file and network
+    access are not reachable through the normal routes — see code_sandbox for the
+    honest boundary. The process + timeout, not the language restriction, is the
+    real isolation.
     """
     t = max(1, min(30, req.timeout or 8))
     result = await run_code(req.code, timeout=t)
@@ -6163,11 +6169,15 @@ async def vision_analyze(req: VisionRequest):
 # Tool Execution Agent — shell, python (sandbox), git
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Read-only inspection commands only. Interpreters (python, node), package
+# managers (pip, npm) and network fetchers (curl, wget) were removed: each is
+# arbitrary code execution or SSRF on its own — `python -c "..."` needs no shell
+# metacharacters, so the token blocklist below never sees it. `find` is out too;
+# its -exec/-delete run commands and delete files. `git` has its own read-only
+# endpoint (/api/tools/git). This list is now things that read and print.
 SAFE_SHELL_COMMANDS = {
     "ls", "dir", "pwd", "echo", "cat", "type", "head", "tail",
-    "grep", "find", "wc", "date", "hostname", "whoami",
-    "pip", "pip3", "python", "python3", "node", "npm",
-    "git", "curl", "wget",
+    "grep", "wc", "date", "hostname", "whoami",
 }
 
 class ShellRequest(BaseModel):
@@ -6194,7 +6204,9 @@ async def tools_shell(request: ShellRequest):
     if base_cmd not in SAFE_SHELL_COMMANDS:
         raise HTTPException(403, f"Command '{parts[0]}' is not in the allowed list: {sorted(SAFE_SHELL_COMMANDS)}")
 
-    # Block dangerous flags
+    # Defence in depth: with exec below no shell interprets these, so they would
+    # be literal args, but rejecting them keeps intent obvious and the surface
+    # small.
     dangerous = [";", "&&", "||", "|", ">", ">>", "<", "`", "$(",
                  "rm", "del", "format", "mkfs", "dd", "shutdown", "reboot"]
     joined = request.command.lower()
@@ -6203,8 +6215,10 @@ async def tools_shell(request: ShellRequest):
             raise HTTPException(403, f"Command contains disallowed token: '{d}'")
 
     try:
-        proc = await asyncio.create_subprocess_shell(
-            request.command,
+        # exec, not shell: the parsed argv is passed directly to the OS with no
+        # shell in between, so metacharacters can't chain commands or redirect.
+        proc = await asyncio.create_subprocess_exec(
+            *parts,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -7009,6 +7023,16 @@ if __name__ == "__main__":
                 failures.append(f"frontend dist/index.html not found (dist={d})")
         except Exception as e:
             failures.append(f"dist lookup: {type(e).__name__}: {e}")
+
+        # The sandbox must actually reject an escape, not merely import.
+        try:
+            import code_sandbox
+            code_sandbox.check_code("import os")
+            failures.append("code_sandbox did NOT reject 'import os'")
+        except code_sandbox.UnsafeCode:
+            pass
+        except Exception as e:
+            failures.append(f"code_sandbox: {type(e).__name__}: {e}")
 
         if failures:
             print("SELFTEST FAILED")
