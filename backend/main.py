@@ -6188,6 +6188,40 @@ class GitRequest(BaseModel):
     repo_path: str = "."
     command: str  # e.g. "log --oneline -10" or "status"
 
+
+async def _run_argv(argv: list[str], timeout: int) -> dict:
+    """Run argv with no shell in between, off the event loop.
+
+    A worker thread running blocking subprocess.run, deliberately, rather than
+    asyncio.create_subprocess_exec: asyncio can only spawn processes on a
+    ProactorEventLoop on Windows, and `uvicorn --reload` puts the app on a
+    SelectorEventLoop, where every spawn raises a bare NotImplementedError.
+    A thread spawns fine on any loop, on any platform, from any thread.
+
+    subprocess.run's own timeout kills the child; asyncio.wait_for around
+    communicate() used to leave it running.
+    """
+    def _call():
+        # stdin=DEVNULL: an HTTP caller has no stdin to give, and inheriting the
+        # server's makes argument-less `cat`/`grep`/`wc` block for the whole
+        # timeout instead of returning at once.
+        return subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL,
+                              timeout=timeout, check=False)
+
+    proc = await asyncio.to_thread(_call)
+    return {
+        "stdout": proc.stdout.decode(errors="replace"),
+        "stderr": proc.stderr.decode(errors="replace"),
+        "returncode": proc.returncode,
+    }
+
+
+def _exec_failure(e: Exception) -> HTTPException:
+    """500 that names the exception type: str(NotImplementedError()) is "",
+    which is how this endpoint spent a long time reporting {"detail": ""}."""
+    return HTTPException(500, f"{type(e).__name__}: {e}".rstrip(": "))
+
+
 @app.post("/api/tools/shell")
 async def tools_shell(request: ShellRequest):
     """Run a whitelisted shell command and return stdout/stderr."""
@@ -6200,7 +6234,9 @@ async def tools_shell(request: ShellRequest):
     if not parts:
         raise HTTPException(400, "Empty command")
 
-    base_cmd = parts[0].lower().rstrip(".exe")
+    # removesuffix, not rstrip: rstrip takes a character *set*, so it turned
+    # date -> dat and hostname -> hostnam and 403'd both.
+    base_cmd = parts[0].lower().removesuffix(".exe")
     if base_cmd not in SAFE_SHELL_COMMANDS:
         raise HTTPException(403, f"Command '{parts[0]}' is not in the allowed list: {sorted(SAFE_SHELL_COMMANDS)}")
 
@@ -6217,23 +6253,13 @@ async def tools_shell(request: ShellRequest):
     try:
         # exec, not shell: the parsed argv is passed directly to the OS with no
         # shell in between, so metacharacters can't chain commands or redirect.
-        proc = await asyncio.create_subprocess_exec(
-            *parts,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=request.timeout
-        )
-        return {
-            "stdout": stdout.decode(errors="replace"),
-            "stderr": stderr.decode(errors="replace"),
-            "returncode": proc.returncode,
-        }
-    except asyncio.TimeoutError:
+        return await _run_argv(parts, request.timeout)
+    except subprocess.TimeoutExpired:
         raise HTTPException(408, "Command timed out")
+    except FileNotFoundError:
+        raise HTTPException(404, f"'{parts[0]}' is allowed but not installed on PATH")
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise _exec_failure(e)
 
 
 @app.post("/api/tools/git")
@@ -6244,24 +6270,16 @@ async def tools_git(request: GitRequest):
     if not parts or parts[0] not in ALLOWED_GIT:
         raise HTTPException(403, f"Git sub-command must be one of: {sorted(ALLOWED_GIT)}")
 
-    import shlex
-    cmd = f'git -C "{request.repo_path}" {request.command}'
+    # argv, not an interpolated shell string: repo_path came from the caller,
+    # and quoting it into a shell command was one `"` away from injection.
     try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-        return {
-            "stdout": stdout.decode(errors="replace"),
-            "stderr": stderr.decode(errors="replace"),
-            "returncode": proc.returncode,
-        }
-    except asyncio.TimeoutError:
+        return await _run_argv(["git", "-C", request.repo_path, *parts], 15)
+    except subprocess.TimeoutExpired:
         raise HTTPException(408, "Git command timed out")
+    except FileNotFoundError:
+        raise HTTPException(404, "git is not installed on PATH")
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise _exec_failure(e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
