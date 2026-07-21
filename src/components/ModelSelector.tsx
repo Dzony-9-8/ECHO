@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { ChevronDown, Zap, Brain, Sparkles, Loader2 } from "lucide-react";
 import { getBackendMode, fetchLocalModels, type LocalModel } from "@/lib/api";
+import ModelPullDialog from "@/components/ModelPullDialog";
 
 export interface ModelOption {
   id: string;
@@ -20,8 +21,6 @@ const CLOUD_MODELS: ModelOption[] = [
 
 const STORAGE_KEY = "echo_selected_model";
 
-// Block NSFW/jailbreak/abliterated models from the model selector
-const BLOCKED_MODEL_PATTERNS = /abliterated|uncensored|stheno|mythomax|dolphin|fluffy|hammer|l2|mistral-7b-instruct-v0\.1|llama2-uncensored/i;
 
 const iconMap = {
   fast: Zap,
@@ -35,16 +34,34 @@ const colorMap = {
   powerful: "text-terminal-magenta",
 };
 
-function localModelToOption(m: LocalModel): ModelOption {
+export function localModelToOption(m: LocalModel): ModelOption {
   const iconType: "fast" | "balanced" | "powerful" =
     m.type === "code" ? "powerful" : m.type === "reasoning" ? "balanced" : "fast";
-  const shortName = m.name.split(":")[0];
+  const baseName = m.name.split(":")[0];
+  const label = baseName
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ") || m.name;
+  const vram = m.estimated_vram_mb > 0 ? ` - ${m.estimated_vram_mb}MB VRAM` : "";
   return {
     id: m.name,
-    label: shortName.charAt(0).toUpperCase() + shortName.slice(1),
-    description: `${m.type} - ${m.estimated_vram_mb}MB VRAM`,
+    label,
+    description: `${m.type}${vram}`,
     icon: iconType,
   };
+}
+
+export function getSelectableLocalModels(models: LocalModel[]): ModelOption[] {
+  return models
+    .filter((m) => m.type !== "embedding")
+    .map(localModelToOption);
+}
+
+export function resolveLocalModelSelection(value: string, models: ModelOption[]): string | null {
+  if (models.length === 0) return null;
+  const isInstalled = models.some((model) => model.id === value);
+  return isInstalled ? null : models[0].id;
 }
 
 export const getSelectedModel = (): string => {
@@ -60,8 +77,15 @@ const ModelSelector = ({ value, onChange }: Props) => {
   const [open, setOpen] = useState(false);
   const [localModels, setLocalModels] = useState<ModelOption[]>([]);
   const [loading, setLoading] = useState(false);
+  const [pullTarget, setPullTarget] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const mode = getBackendMode();
+
+  // Keep latest value/onChange accessible without re-triggering the fetch effect.
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -78,17 +102,16 @@ const ModelSelector = ({ value, onChange }: Props) => {
     setLoading(true);
     fetchLocalModels().then((models) => {
       if (cancelled) return;
-      const filtered = models.filter(
-        (m) => m.type !== "embedding" && !BLOCKED_MODEL_PATTERNS.test(m.name)
-      );
-      setLocalModels(filtered.map(localModelToOption));
+      const selectable = getSelectableLocalModels(models);
+      setLocalModels(selectable);
       setLoading(false);
-      // Auto-select first local model if current selection is a cloud model
-      if (filtered.length > 0 && value.includes("/")) {
-        const first = filtered[0].name;
-        onChange(first);
-        localStorage.setItem(STORAGE_KEY, first);
+      const nextModel = resolveLocalModelSelection(valueRef.current, selectable);
+      if (nextModel) {
+        onChangeRef.current(nextModel);
+        localStorage.setItem(STORAGE_KEY, nextModel);
       }
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
   }, [mode]);
@@ -147,7 +170,41 @@ const ModelSelector = ({ value, onChange }: Props) => {
               </button>
             );
           })}
+          {mode === "local" && (
+            <div className="border-t pt-1 pb-1">
+              <button
+                className="w-full text-left px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  const name = prompt("Model name to pull (e.g. llama3.2:3b):");
+                  if (name?.trim()) setPullTarget(name.trim());
+                }}
+              >
+                + Pull a model from Ollama…
+              </button>
+            </div>
+          )}
         </div>
+      )}
+      {pullTarget && (
+        <ModelPullDialog
+          model={pullTarget}
+          open={!!pullTarget}
+          onClose={() => setPullTarget(null)}
+          onSuccess={() => {
+            setPullTarget(null);
+            if (getBackendMode() === "local") {
+              fetchLocalModels().then((models) => {
+                const selectable = getSelectableLocalModels(models);
+                setLocalModels(selectable);
+                const nextModel = resolveLocalModelSelection(value, selectable);
+                if (nextModel) {
+                  onChange(nextModel);
+                  localStorage.setItem(STORAGE_KEY, nextModel);
+                }
+              });
+            }
+          }}
+        />
       )}
     </div>
   );

@@ -23,6 +23,7 @@ import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 import { saveBranch, getParentBranch } from "@/lib/branches";
 import { getConversationSystemPrompt, setConversationSystemPrompt } from "@/lib/conversationSystemPrompts";
 import { buildSkillsPrompt } from "@/lib/agentSkills";
+import { buildProfilePrompt } from "@/lib/aboutMe";
 import { setAgentActive, setAgentComplete, resetAllAgents } from "@/lib/agentStatus";
 
 const WELCOME_MSG: ChatMessageType = {
@@ -55,8 +56,9 @@ const ChatView = () => {
     new Set(["Planner", "Supervisor", "Developer", "Researcher", "Critic"])
   );
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const rafRef = useRef<number | null>(null);
-  const pendingChunkRef = useRef<string>("");
+  // Incremented on every new conversation / conversation switch.
+  // doSend captures its own gen; any callback that sees a stale gen is ignored.
+  const streamGenRef = useRef(0);
 
   const {
     conversations,
@@ -100,14 +102,20 @@ const ChatView = () => {
   }, [activeConversationId]);
 
   const handleSelectConversation = useCallback(async (id: string) => {
+    streamGenRef.current += 1;   // invalidate any in-flight stream
     setActiveConversationId(id);
+    setIsStreaming(false);
+    setMessageSteps(new Map());
     const msgs = await loadMessages(id);
     setMessages(msgs.length > 0 ? msgs : [WELCOME_MSG]);
     setShowMobileHistory(false);
   }, [loadMessages, setActiveConversationId]);
 
   const handleNewConversation = useCallback(async () => {
+    streamGenRef.current += 1;   // invalidate any in-flight stream
     setActiveConversationId(null);
+    setIsStreaming(false);
+    setMessageSteps(new Map());
     setMessages([WELCOME_MSG]);
     setShowMobileHistory(false);
   }, [setActiveConversationId]);
@@ -219,13 +227,15 @@ const ChatView = () => {
     setShowCanvas(true);
   }, []);
 
-  // Determine the effective system prompt for the current conversation
+  // Determine the effective system prompt for the current conversation.
+  // The personal "About me" profile (if enabled) is prepended so every
+  // response is personalized, without overriding an explicit system prompt.
   const getEffectiveSystemPrompt = useCallback((): string => {
-    if (activeConversationId) {
-      const perConv = getConversationSystemPrompt(activeConversationId);
-      if (perConv) return perConv;
-    }
-    return systemPrompt;
+    const base = activeConversationId
+      ? getConversationSystemPrompt(activeConversationId) || systemPrompt
+      : systemPrompt;
+    const profile = buildProfilePrompt();
+    return [profile, base].filter(Boolean).join("\n\n");
   }, [activeConversationId, systemPrompt]);
 
   const doSend = async (
@@ -333,6 +343,10 @@ const ChatView = () => {
     setStreamStartTime(Date.now());
     setAgentActive(assistantMsg.agent || "ECHO Cloud", content.slice(0, 60));
 
+    // Capture current generation — if it changes (new conversation / switch), all our
+    // callbacks below become no-ops so they can't corrupt the new conversation's state.
+    const myGen = streamGenRef.current;
+
     let convId = activeConversationId;
     if (!convId) {
       convId = await createConversation(content.slice(0, 80) || "New Conversation");
@@ -346,23 +360,16 @@ const ChatView = () => {
       const response = await sendMessage(
         allForBackend,
         (chunk) => {
-          // RAF debounce: only re-render once per animation frame, not per SSE chunk
-          pendingChunkRef.current = chunk;
-          if (!rafRef.current) {
-            rafRef.current = requestAnimationFrame(() => {
-              const latest = pendingChunkRef.current;
-              setMessages((prev) =>
-                prev.map((m) => (m.id === msgId ? { ...m, content: latest } : m))
-              );
-              rafRef.current = null;
-            });
-          }
+          if (streamGenRef.current !== myGen) return;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === msgId ? { ...m, content: chunk } : m))
+          );
         },
         depth ?? 1,
         model,
         images,
         (stepEvent: ChatStepEvent) => {
-          // Accumulate step events for this message
+          if (streamGenRef.current !== myGen) return;
           setMessageSteps((prev) => {
             const existing = prev.get(msgId) ?? [];
             const now = Date.now();
@@ -375,14 +382,15 @@ const ChatView = () => {
                   text: stepEvent.text,
                   status: "running" as const,
                   startTime: now,
+                  phase: stepEvent.phase,
+                  detail: stepEvent.detail,
                 },
               ]);
             } else {
-              // Find the last "running" step for this agent and mark done
               const updated = [...existing];
               for (let i = updated.length - 1; i >= 0; i--) {
                 if (updated[i].agent === stepEvent.agent && updated[i].status === "running") {
-                  updated[i] = { ...updated[i], status: "done" as const, endTime: now };
+                  updated[i] = { ...updated[i], status: "done" as const, endTime: now, detail: stepEvent.detail ?? updated[i].detail };
                   break;
                 }
               }
@@ -390,8 +398,31 @@ const ChatView = () => {
             }
           });
         },
-        backendAttachments.length > 0 ? backendAttachments : undefined
+        backendAttachments.length > 0 ? backendAttachments : undefined,
+        (weatherData) => {
+          if (streamGenRef.current !== myGen) return;
+          setMessages((prev) =>
+            prev.map((m) => m.id === msgId ? { ...m, weatherData } : m)
+          );
+        },
+        (agent: string, token: string) => {
+          if (streamGenRef.current !== myGen) return;
+          setMessageSteps((prev) => {
+            const existing = prev.get(msgId) ?? [];
+            const updated = [...existing];
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if (updated[i].agent === agent && updated[i].status === "running") {
+                updated[i] = { ...updated[i], thoughtText: (updated[i].thoughtText ?? "") + token };
+                break;
+              }
+            }
+            return new Map(prev).set(msgId, updated);
+          });
+        }
       );
+
+      // If the conversation changed while we were streaming, discard everything
+      if (streamGenRef.current !== myGen) return;
 
       const finalContent = response || assistantMsg.content;
       setMessages((prev) =>
@@ -414,14 +445,22 @@ const ChatView = () => {
       logUsage(assistantMsg.model || "unknown", totalMsgTokens, latency, convId || undefined);
       setAgentComplete(assistantMsg.agent || "ECHO Cloud", totalMsgTokens);
 
-      // Auto-open canvas if the response contains previewable code blocks
       if (/```(html|css|javascript|js|jsx|tsx|svg)\b/i.test(finalContent)) {
         setShowCanvas(true);
       }
     } catch (err: any) {
-      const errMsg = err?.message || "Connection failed";
+      if (streamGenRef.current !== myGen) return; // stale — swallow silently
 
-      if (errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit")) {
+      const errMsg = err?.message || "Connection failed";
+      const errType = err?.errorType || "";
+
+      if (errType === "connection" || errMsg.toLowerCase().includes("ollama is not running")) {
+        toast.error("Ollama is not running — open a terminal and run: ollama serve");
+      } else if (errType === "model_missing" || errMsg.toLowerCase().includes("model not found")) {
+        toast.error(errMsg);
+      } else if (errType === "timeout" || errMsg.toLowerCase().includes("timed out")) {
+        toast.warning("Ollama is still loading the model — please wait a moment and try again.");
+      } else if (errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit")) {
         toast.error("Rate limit exceeded — please wait a moment and try again.");
       } else if (errMsg.includes("402") || errMsg.toLowerCase().includes("credit")) {
         toast.error("AI credits exhausted — add credits in workspace settings.");
@@ -440,7 +479,10 @@ const ChatView = () => {
       );
       setAgentComplete(assistantMsg.agent || "ECHO Cloud", 0);
     } finally {
-      setIsStreaming(false);
+      // Only clear streaming state if we're still the active generation
+      if (streamGenRef.current === myGen) {
+        setIsStreaming(false);
+      }
     }
   };
 

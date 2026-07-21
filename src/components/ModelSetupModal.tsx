@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, X, Loader2, Download, ExternalLink } from "lucide-react";
+import { getBackendUrl } from "@/lib/api";
 
 interface ModelInfo {
   name: string;
@@ -37,9 +38,10 @@ const ModelSetupModal = ({ onDismiss }: Props) => {
 
   useEffect(() => {
     // Fetch model status and installer info in parallel
+    const url = getBackendUrl();
     Promise.all([
-      fetch("http://localhost:8000/api/system/models").then((r) => r.json()),
-      fetch("http://localhost:8000/api/system/ollama-installer").then((r) => r.json()).catch(() => null),
+      fetch(`${url}/api/system/models`).then((r) => r.json()),
+      fetch(`${url}/api/system/ollama-installer`).then((r) => r.json()).catch(() => null),
     ])
       .then(([models, installer]: [SystemModelsResponse, InstallerInfo | null]) => {
         setData(models);
@@ -55,7 +57,7 @@ const ModelSetupModal = ({ onDismiss }: Props) => {
   const triggerOllamaInstall = async () => {
     setOllamaInstalling(true);
     try {
-      await fetch("http://localhost:8000/api/system/install-ollama", { method: "POST" });
+      await fetch(`${getBackendUrl()}/api/system/install-ollama`, { method: "POST" });
     } catch {
       // backend opened browser/installer regardless
     } finally {
@@ -96,7 +98,7 @@ const ModelSetupModal = ({ onDismiss }: Props) => {
   const triggerInstall = async (payload: object) => {
     setInstalling(true);
     try {
-      await fetch("http://localhost:8000/api/system/install", {
+      await fetch(`${getBackendUrl()}/api/system/install`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

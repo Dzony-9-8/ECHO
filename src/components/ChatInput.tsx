@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Mic, MicOff, Paperclip, X, FileText, Layers, Image as ImageIcon } from "lucide-react";
+import { Send, Mic, MicOff, Paperclip, X, FileText, Layers, Image as ImageIcon, Wand2, PhoneCall, Smile } from "lucide-react";
 import {
   type FileAttachment,
   getFileType,
@@ -9,9 +9,13 @@ import {
   ACCEPT_STRING,
   getFileIcon,
 } from "@/lib/files";
+import { sendMessage, getBackendUrl } from "@/lib/api";
 import ModelSelector, { getSelectedModel } from "./ModelSelector";
 import PromptTemplates from "./PromptTemplates";
 import SlashCommandMenu, { type SlashCommand } from "./SlashCommandMenu";
+import EmojiPicker from "./EmojiPicker";
+import EmojiAutocomplete from "./EmojiAutocomplete";
+import { searchEmoji, type Emoji } from "@/lib/emoji";
 
 interface Props {
   onSend: (message: string, files?: FileAttachment[], depth?: number, model?: string, images?: string[]) => void;
@@ -24,19 +28,49 @@ interface ImagePreview {
   url: string;
 }
 
+// Minimal shape of the Web Speech API result event (not in the TS DOM lib).
+interface SpeechResultEvent {
+  resultIndex: number;
+  results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }>;
+}
+
 const ChatInput = ({ onSend, disabled }: Props) => {
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<FileAttachment[]>([]);
   const [imagePreviews, setImagePreviews] = useState<ImagePreview[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [depth, setDepth] = useState(1);
+  const [depth, setDepth] = useState(() => {
+    const stored = Number(localStorage.getItem("echo_depth"));
+    return stored >= 1 && stored <= 5 ? stored : 1;
+  });
   const [model, setModel] = useState(getSelectedModel);
+
+  // Persist depth so presets (and the next session) can restore it.
+  useEffect(() => { localStorage.setItem("echo_depth", String(depth)); }, [depth]);
   const [isListening, setIsListening] = useState(false);
+  const [isIntercomActive, setIsIntercomActive] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [emojiQuery, setEmojiQuery] = useState("");   // active ":shortcode" query
+  const [emojiStart, setEmojiStart] = useState(-1);   // index of the ":" in input
+  const [isFixing, setIsFixing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const emojiWrapRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const socketRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+
+  // Close the emoji picker on click outside its button+popup wrapper.
+  useEffect(() => {
+    if (!showEmoji) return;
+    const onDown = (e: MouseEvent) => {
+      if (emojiWrapRef.current && !emojiWrapRef.current.contains(e.target as Node)) setShowEmoji(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [showEmoji]);
 
   const speechSupported = typeof window !== "undefined" && ("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
 
@@ -56,7 +90,7 @@ const ChatInput = ({ onSend, disabled }: Props) => {
 
     let finalTranscript = "";
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: SpeechResultEvent) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
@@ -83,6 +117,94 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     recognition.start();
     setIsListening(true);
   }, [isListening, speechSupported]);
+
+  const toggleIntercom = useCallback(async () => {
+    if (isIntercomActive) {
+      if (recognitionRef.current) recognitionRef.current.stop();
+      socketRef.current?.close();
+      setIsIntercomActive(false);
+      return;
+    }
+    if (!speechSupported) {
+        console.error("Transcriber needs WebKitSpeechRecognition support");
+        return;
+    }
+    try {
+      const wsUrl = getBackendUrl().replace("http", "ws") + "/api/voice/stream";
+      const ws = new WebSocket(wsUrl);
+      
+      ws.onopen = () => {
+        setIsIntercomActive(true);
+        // Using native VAD + STT layer instead of raw mic chunking
+        const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        const recognition = new SpeechRecognitionCtor();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = "en-US";
+        
+        recognition.onresult = (event: any) => {
+          let interim = "";
+          let newFinal = "";
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              newFinal += event.results[i][0].transcript + " ";
+            } else {
+              interim += event.results[i][0].transcript;
+            }
+          }
+          
+          if (newFinal.trim().length > 0 && ws.readyState === WebSocket.OPEN) {
+             ws.send(JSON.stringify({ text: newFinal.trim() }));
+          }
+
+          setInput((prev) => {
+            const base = prev.replace(/\u200B.*$/, "").trimEnd();
+            return (base ? base + " " : "") + newFinal + (interim ? "\u200B" + interim : "");
+          });
+        };
+
+        recognition.onerror = () => {};
+        recognition.onend = () => {
+           // Auto-restart if we haven't manually hung up!
+           if (socketRef.current === ws) {
+              try { recognition.start(); } catch (e) {}
+           }
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+      };
+
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          // Play TTS audio sent back by fish-speech via WebSocket
+          if (data.type === "tts_audio" && data.audio_b64) {
+            const raw = atob(data.audio_b64);
+            const buf = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+            const blob = new Blob([buf], { type: "audio/wav" });
+            const url = URL.createObjectURL(blob);
+            const audio = new Audio(url);
+            audio.onended = () => URL.revokeObjectURL(url);
+            audio.play().catch(() => {});
+          }
+        } catch {
+          // non-JSON frame — ignore
+        }
+      };
+
+      ws.onclose = () => {
+        setIsIntercomActive(false);
+        if (recognitionRef.current) recognitionRef.current.stop();
+        setInput((prev) => prev.replace(/\u200B/g, ""));
+      };
+      
+      socketRef.current = ws;
+    } catch (e) {
+      console.error("PersonaPlex Intercom failed", e);
+    }
+  }, [isIntercomActive, speechSupported]);
 
   // Auto-save draft
   useEffect(() => {
@@ -125,6 +247,48 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     setInput(cmd.prompt);
     setShowSlashMenu(false);
     textareaRef.current?.focus();
+  };
+
+  // Detect an active ":shortcode" being typed before the caret.
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value;
+    setInput(val);
+    const caret = e.target.selectionStart ?? val.length;
+    const m = val.slice(0, caret).match(/:([\w+-]{1,})$/);
+    if (m) { setEmojiQuery(m[1]); setEmojiStart(caret - m[0].length); }
+    else { setEmojiQuery(""); setEmojiStart(-1); }
+  };
+
+  const emojiAcVisible = emojiStart >= 0 && emojiQuery.length > 0 && searchEmoji(emojiQuery, 1).length > 0;
+
+  // Insert an emoji at the caret (picker button).
+  const insertEmoji = (char: string) => {
+    const el = textareaRef.current;
+    const start = el?.selectionStart ?? input.length;
+    const end = el?.selectionEnd ?? start;
+    const next = input.slice(0, start) + char + input.slice(end);
+    setInput(next);
+    setShowEmoji(false);
+    requestAnimationFrame(() => {
+      const pos = start + char.length;
+      el?.setSelectionRange(pos, pos);
+      el?.focus();
+    });
+  };
+
+  // Replace the typed ":shortcode" with the chosen emoji (autocomplete).
+  const completeShortcode = (emoji: Emoji) => {
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? input.length;
+    const next = input.slice(0, emojiStart) + emoji.char + input.slice(caret);
+    setInput(next);
+    setEmojiQuery("");
+    setEmojiStart(-1);
+    requestAnimationFrame(() => {
+      const pos = emojiStart + emoji.char.length;
+      el?.setSelectionRange(pos, pos);
+      el?.focus();
+    });
   };
 
   const addFiles = useCallback(async (fileList: FileList | File[]) => {
@@ -178,8 +342,8 @@ const ChatInput = ({ onSend, disabled }: Props) => {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Don't handle Enter when slash menu is open (it handles its own)
-    if (showSlashMenu && (e.key === "Enter" || e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    // Don't handle these keys when the slash or emoji menu is open (they handle their own)
+    if ((showSlashMenu || emojiAcVisible) && (e.key === "Enter" || e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp")) {
       return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
@@ -192,6 +356,27 @@ const ChatInput = ({ onSend, disabled }: Props) => {
     setInput(prompt);
     textareaRef.current?.focus();
   };
+
+  const handleFixGrammar = useCallback(async () => {
+    if (!input.trim() || isFixing) return;
+    setIsFixing(true);
+    try {
+      const msgs = [{
+        id: "fix",
+        role: "user" as const,
+        content: `Fix the grammar and spelling in the following text. Return only the corrected text with no explanation, no quotes, no commentary:\n\n${input}`,
+        timestamp: new Date(),
+      }];
+      let result = "";
+      await sendMessage(msgs, (chunk) => { result = chunk; }, 0, model);
+      if (result.trim()) setInput(result.trim());
+    } catch {
+      // silently fail — input stays unchanged
+    } finally {
+      setIsFixing(false);
+      textareaRef.current?.focus();
+    }
+  }, [input, isFixing, model]);
 
   // Drag and drop handlers
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -302,6 +487,30 @@ const ChatInput = ({ onSend, disabled }: Props) => {
         >
           <Paperclip className="w-4 h-4" />
         </button>
+
+        {/* Fix grammar */}
+        <button
+          onClick={handleFixGrammar}
+          disabled={disabled || !input.trim() || isFixing}
+          className="p-2.5 rounded border border-terminal-cyan bg-terminal-cyan/10 text-terminal-cyan hover:bg-terminal-cyan/20 transition-colors disabled:opacity-30"
+          title="Fix grammar & spelling with AI"
+        >
+          <Wand2 className={`w-4 h-4 ${isFixing ? "animate-pulse" : ""}`} />
+        </button>
+
+        {/* Emoji */}
+        <div ref={emojiWrapRef} className="relative">
+          <button
+            onClick={() => setShowEmoji((s) => !s)}
+            disabled={disabled}
+            className="p-2.5 rounded border border-terminal-amber bg-terminal-amber/10 text-terminal-amber hover:bg-terminal-amber/20 transition-colors disabled:opacity-30"
+            title="Insert emoji (or type :shortcode:)"
+          >
+            <Smile className="w-4 h-4" />
+          </button>
+          <EmojiPicker open={showEmoji} onSelect={insertEmoji} onClose={() => setShowEmoji(false)} />
+        </div>
+
         <input
           ref={fileInputRef}
           type="file"
@@ -320,15 +529,24 @@ const ChatInput = ({ onSend, disabled }: Props) => {
             onClose={() => setShowSlashMenu(false)}
           />
 
+          {/* Emoji :shortcode: autocomplete */}
+          <EmojiAutocomplete
+            query={emojiQuery}
+            visible={emojiAcVisible}
+            onSelect={completeShortcode}
+            onClose={() => { setEmojiQuery(""); setEmojiStart(-1); }}
+          />
+
           <div className="absolute left-3 top-3 text-primary text-sm glow-green select-none">{">"}_</div>
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             placeholder={files.length > 0 ? "Describe what to do with these files..." : "Enter command or type / for commands..."}
             disabled={disabled}
             rows={1}
+            spellCheck={true}
             className="w-full bg-input border border-border rounded px-3 py-2.5 pl-10 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary focus:glow-border resize-none font-mono disabled:opacity-50"
           />
         </div>
@@ -360,17 +578,29 @@ const ChatInput = ({ onSend, disabled }: Props) => {
         {speechSupported && (
           <button
             onClick={toggleVoice}
-            disabled={disabled}
+            disabled={disabled || isIntercomActive}
             className={`p-2.5 rounded border transition-colors ${
               isListening
                 ? "border-terminal-red bg-terminal-red/20 text-terminal-red animate-pulse"
                 : "border-terminal-cyan bg-terminal-cyan/10 text-terminal-cyan hover:bg-terminal-cyan/20"
             } disabled:opacity-30`}
-            title={isListening ? "Stop listening" : "Voice input"}
+            title={isListening ? "Stop listening" : "Voice dictation"}
           >
             {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
         )}
+        <button
+          onClick={toggleIntercom}
+          disabled={disabled || isListening}
+          className={`p-2.5 rounded border transition-all ${
+            isIntercomActive
+              ? "border-terminal-magenta bg-terminal-magenta/20 text-terminal-magenta animate-pulse shadow-[0_0_15px_rgba(255,0,255,0.4)]"
+              : "border-terminal-magenta/50 bg-terminal-magenta/5 text-terminal-magenta hover:bg-terminal-magenta/20"
+          } disabled:opacity-30`}
+          title={isIntercomActive ? "End PersonaPlex Call" : "PersonaPlex Intercom Call"}
+        >
+          <PhoneCall className="w-4 h-4" />
+        </button>
       </div>
     </div>
   );

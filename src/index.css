@@ -106,7 +106,7 @@
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'JetBrains Mono', monospace;
+    font-family: var(--font-mono), 'JetBrains Mono', monospace;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
@@ -227,6 +227,11 @@
   0%   { opacity: 0; transform: translateY(-8px) translateX(0); }
   50%  { opacity: 1; transform: translateY(14px) translateX(3px); }
   100% { opacity: 0; transform: translateY(28px) translateX(-2px); }
+}
+
+@keyframes cot-blink {
+  0%, 100% { opacity: 0.9; }
+  50%       { opacity: 0;   }
 }
 
 /* ── Utility classes from animations ────────────────────────────────────────── */
@@ -373,4 +378,8 @@
 /* Misc */
 .no-scanlines .scanline { display: none !important; }
 
-:root { --chat-font-size: 14px; }
+:root {
+  --chat-font-size: 14px;
+  --font-mono: 'JetBrains Mono';
+  --font-display: 'Share Tech Mono';
+}

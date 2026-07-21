@@ -18,6 +18,25 @@ import {
   Puzzle,
   Bot,
   FolderOpen,
+  Columns2,
+  FileCode2,
+  Ship,
+  SlidersHorizontal,
+  ChefHat,
+  NotebookPen,
+  FilePen,
+  Image as ImageIcon,
+  CalendarDays,
+  Palette,
+  Contact,
+  Stethoscope,
+  BellRing,
+  Users,
+  UserCircle,
+  ImageDown,
+  Plug,
+  Youtube,
+  KeyRound,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/hooks/useAuth";
@@ -36,7 +55,26 @@ export type ViewType =
   | "tools"
   | "plugins"
   | "autonomous"
-  | "project";
+  | "project"
+  | "compare"
+  | "modelfile"
+  | "odysseus"
+  | "presets"
+  | "cookbook"
+  | "notes"
+  | "documents"
+  | "gallery"
+  | "calendar"
+  | "themes"
+  | "contacts"
+  | "diagnostics"
+  | "reminders"
+  | "groupchat"
+  | "aboutme"
+  | "imageeditor"
+  | "mcp"
+  | "youtube"
+  | "vault";
 
 interface Props {
   activeView: ViewType;
@@ -64,6 +102,25 @@ const navItems: {
   { id: "plugins",    icon: Puzzle,   label: "Plugins",    color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
   { id: "autonomous", icon: Bot,        label: "Autonomous", color: "text-terminal-amber",   glow: "hsl(38 90% 55%)"  },
   { id: "project",    icon: FolderOpen, label: "Projects",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "compare",    icon: Columns2,   label: "Compare",    color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "modelfile",  icon: FileCode2,  label: "Modelfile",  color: "text-primary",          glow: "hsl(142 70% 45%)" },
+  { id: "odysseus",   icon: Ship,       label: "Odysseus",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "presets",    icon: SlidersHorizontal, label: "Presets", color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "cookbook",   icon: ChefHat,    label: "Cookbook",   color: "text-primary",          glow: "hsl(142 70% 45%)" },
+  { id: "notes",      icon: NotebookPen, label: "Notes",     color: "text-terminal-amber",   glow: "hsl(38 90% 55%)"  },
+  { id: "documents",  icon: FilePen,    label: "Documents",  color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "gallery",    icon: ImageIcon,  label: "Gallery",    color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "calendar",   icon: CalendarDays, label: "Calendar", color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "themes",     icon: Palette,    label: "Themes",     color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "contacts",   icon: Contact,    label: "Contacts",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "diagnostics", icon: Stethoscope, label: "Diagnostics", color: "text-terminal-amber", glow: "hsl(38 90% 55%)" },
+  { id: "reminders",  icon: BellRing,    label: "Reminders",  color: "text-terminal-amber",   glow: "hsl(38 90% 55%)"  },
+  { id: "groupchat",  icon: Users,       label: "Group Chat", color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "aboutme",    icon: UserCircle,  label: "About Me",   color: "text-terminal-cyan",    glow: "hsl(185 60% 50%)" },
+  { id: "imageeditor", icon: ImageDown,  label: "Image Editor", color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "mcp",        icon: Plug,        label: "MCP Servers", color: "text-terminal-magenta", glow: "hsl(280 60% 55%)" },
+  { id: "youtube",    icon: Youtube,     label: "YouTube",    color: "text-terminal-red",     glow: "hsl(0 70% 55%)"   },
+  { id: "vault",      icon: KeyRound,    label: "Vault",      color: "text-terminal-amber",   glow: "hsl(38 90% 55%)"  },
 ];
 
 const AppSidebar = ({ activeView, onViewChange }: Props) => {

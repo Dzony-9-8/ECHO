@@ -2,6 +2,9 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { supabase } from "@/integrations/supabase/client";
 import type { User, Session } from "@supabase/supabase-js";
 
+export const LOCAL_USER_KEY = "echo_local_user";
+export const isLocalUser = () => localStorage.getItem(LOCAL_USER_KEY) === "true";
+
 interface AuthCtx {
   user: User | null;
   session: Session | null;
@@ -24,6 +27,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Local bypass — skip Supabase auth entirely
+    if (localStorage.getItem(LOCAL_USER_KEY) === "true") {
+      setUser({ id: "local", email: "local@echo.local" } as unknown as User);
+      setSession(null);
+      setLoading(false);
+      return; // Don't subscribe to Supabase
+    }
+
+    // Normal Supabase auth flow
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         setSession(session);
@@ -42,6 +54,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const signOut = async () => {
+    if (localStorage.getItem(LOCAL_USER_KEY) === "true") {
+      localStorage.removeItem(LOCAL_USER_KEY);
+      window.location.href = "/auth";
+      return;
+    }
     await supabase.auth.signOut();
   };
 

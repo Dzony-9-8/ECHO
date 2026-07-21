@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Sparkles, FileText, Languages, Code2, ListChecks, Lightbulb, Repeat, Shield,
+  Sparkles, FileText, Languages, Code2, ListChecks, Lightbulb, Repeat, Shield, TerminalSquare,
 } from "lucide-react";
+import { loadCustomSlash } from "@/lib/slashCommands";
 
 export interface SlashCommand {
   id: string;
@@ -34,12 +35,24 @@ const SlashCommandMenu = ({ input, visible, onSelect, onClose }: Props) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Merge built-in commands with the user's custom ones (re-read when opened).
+  const allCommands = useMemo<SlashCommand[]>(() => {
+    const custom: SlashCommand[] = loadCustomSlash().map((c) => ({
+      id: `custom_${c.id}`,
+      label: `/${c.name}`,
+      description: c.prompt.slice(0, 60) || "Custom command",
+      icon: <TerminalSquare className="w-3.5 h-3.5" />,
+      prompt: c.prompt,
+    }));
+    return [...SLASH_COMMANDS, ...custom];
+  }, [visible]);
+
   const query = input.startsWith("/") ? input.slice(1).toLowerCase() : "";
   const filtered = query
-    ? SLASH_COMMANDS.filter(
+    ? allCommands.filter(
         (c) => c.label.toLowerCase().includes(query) || c.description.toLowerCase().includes(query)
       )
-    : SLASH_COMMANDS;
+    : allCommands;
 
   useEffect(() => {
     setSelectedIndex(0);

@@ -5,11 +5,12 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { motion } from "framer-motion";
 import { ChatMessage as ChatMessageType } from "@/lib/api";
+import WeatherCard from "@/components/WeatherCard";
 import {
   Bot, User, Cpu, Image, FileText, Edit3, RefreshCw,
   Copy, Check, Hash, GitBranch, ThumbsUp, ThumbsDown, Volume2, Eye,
 } from "lucide-react";
-import { useState, useMemo, lazy, Suspense, memo, useEffect } from "react";
+import { useState, useMemo, lazy, Suspense, memo, useEffect, Component, type ReactNode, type ErrorInfo } from "react";
 import { getBackendMode, submitFeedback, getBackendUrl, checkVisionStatus, analyzeImage } from "@/lib/api";
 import CodeBlock from "./CodeBlock";
 import BranchIndicator, { type BranchInfo } from "./BranchIndicator";
@@ -18,6 +19,14 @@ import { estimateTokens, formatTokenCount } from "@/lib/tokens";
 import { getBranchesForMessage } from "@/lib/branches";
 
 const MermaidDiagram = lazy(() => import("./MermaidDiagram"));
+
+// ── Error boundary — prevents any ThinkingSteps crash from blacking out the page ──
+class StepsBoundary extends Component<{ children: ReactNode }, { err: boolean }> {
+  state = { err: false };
+  static getDerivedStateFromError() { return { err: true }; }
+  componentDidCatch(e: Error, info: ErrorInfo) { console.warn("[ThinkingSteps crash]", e, info); }
+  render() { return this.state.err ? null : this.props.children; }
+}
 
 interface Props {
   message: ChatMessageType;
@@ -93,16 +102,37 @@ const ChatMessage = ({
     if (speaking) return;
     setSpeaking(true);
     try {
-      await fetch(`${getBackendUrl()}/api/voice/speak`, {
+      const resp = await fetch(`${getBackendUrl()}/api/voice/speak`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: message.content.slice(0, 2000) }),
       });
+      if (resp.ok) {
+        const data = await resp.json();
+        // Fish Speech returns audio_b64 — play it in the browser
+        if (data.audio_b64) {
+          const raw = atob(data.audio_b64);
+          const buf = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+          const blob = new Blob([buf], { type: "audio/wav" });
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            setSpeaking(false);
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            setSpeaking(false);
+          };
+          await audio.play();
+          return; // setSpeaking(false) handled by onended
+        }
+      }
     } catch {
       // TTS not available — ignore silently
-    } finally {
-      setTimeout(() => setSpeaking(false), 1500);
     }
+    setTimeout(() => setSpeaking(false), 1500);
   };
 
   const tokenCount = useMemo(() => estimateTokens(message.content), [message.content]);
@@ -227,7 +257,14 @@ const ChatMessage = ({
           ) : (
             <>
               {steps && steps.length > 0 && (
-                <ThinkingSteps steps={steps} isStreaming={isStreaming ?? false} />
+                <StepsBoundary>
+                  <ThinkingSteps steps={steps} isStreaming={isStreaming ?? false} />
+                </StepsBoundary>
+              )}
+              {!isUser && message.weatherData && (
+                <div className="mb-2 w-full max-w-[85%]">
+                  <WeatherCard data={message.weatherData} />
+                </div>
               )}
             <div
               className={`inline-block text-left rounded-xl px-4 py-3 text-sm leading-relaxed max-w-[85%] transition-all ${
@@ -241,7 +278,7 @@ const ChatMessage = ({
                   : { boxShadow: "0 2px 10px hsl(0 0% 0% / 0.18)" }
               }
             >
-              {msgIsStreaming && !message.content ? (
+              {msgIsStreaming && !message.content && (!steps || steps.length === 0) ? (
                 <StreamingBar />
               ) : (
                 <div className="prose prose-sm prose-invert max-w-none [&_code]:text-terminal-amber [&_code:not(pre_code)]:bg-muted [&_pre]:bg-transparent [&_pre]:border-none [&_pre]:p-0 [&_pre]:m-0">
@@ -382,8 +419,9 @@ const ChatMessage = ({
 export default memo(
   ChatMessage,
   (prev, next) =>
-    prev.message.id      === next.message.id &&
-    prev.message.content === next.message.content &&
-    prev.message.status  === next.message.status &&
-    prev.steps           === next.steps,
+    prev.message.id          === next.message.id &&
+    prev.message.content     === next.message.content &&
+    prev.message.status      === next.message.status &&
+    prev.message.weatherData === next.message.weatherData &&
+    prev.steps               === next.steps,
 );

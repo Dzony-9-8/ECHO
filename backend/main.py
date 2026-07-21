@@ -41,19 +41,26 @@ Endpoints:
 Run:
     cd backend
     pip install -r requirements.txt
-    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+
+Binds loopback only: ECHO has no authentication, so anything reachable on the
+port is fully readable. Set ECHO_ALLOW_LAN=1 to expose it on the network
+deliberately (and understand that it is unauthenticated when you do).
 """
 
 import asyncio
 import hashlib
 import json
+import importlib
 import logging
 import logging.handlers
 import mimetypes
 import os
 import platform
 import re
+import shutil
 import socket
+import subprocess
 import sys
 import time
 from collections import OrderedDict
@@ -133,6 +140,22 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from fastapi import WebSocket, WebSocketDisconnect
+
+from memory.hindsight_engine import HindsightMemory
+from memory.reme_compactor import ContextCompactor
+from memory.alfred_graph import AlfredKnowledgeGraph
+import model_advisor
+from model_advisor import check_model_outdated
+import odysseus_updates
+import image_gen
+import documents_store
+import vault
+import youtube_tools
+
+_hindsight = HindsightMemory()
+_reme = ContextCompactor()
+_alfred = AlfredKnowledgeGraph()
 
 # ── v3.6: Prompt Injection Scanner ───────────────────────────────────────────
 import re as _re
@@ -387,10 +410,30 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ECHO Local Backend", version="3.3.0", lifespan=lifespan)
 
-app.add_middleware(GZipMiddleware, minimum_size=1024)  # Compress responses > 1KB
+# ── Network exposure ─────────────────────────────────────────────────────────
+# ECHO is a local-first app with NO authentication: every endpoint is reachable
+# by anyone who can open the port. It used to bind 0.0.0.0 with wildcard CORS,
+# which put chats, documents and drafts in reach of the whole local network —
+# on shared wifi, that is everyone. Default to loopback and require an explicit
+# opt-in for LAN access.
+_ALLOW_LAN = os.environ.get("ECHO_ALLOW_LAN", "").strip().lower() in ("1", "true", "yes")
+BIND_HOST = os.environ.get("ECHO_HOST") or ("0.0.0.0" if _ALLOW_LAN else "127.0.0.1")
+
+# Same reasoning for CORS: a wildcard lets any website you visit script requests
+# against localhost:8000 and read the responses. Only ECHO's own dev servers and
+# the packaged app's own origin need access.
+_DEV_PORTS = (8000, 8080, 5173, 4173, 3000)
+_ALLOWED_ORIGINS = [
+    f"http://{host}:{port}"
+    for host in ("localhost", "127.0.0.1")
+    for port in _DEV_PORTS
+]
+
+# GZip disabled — it buffers SSE streams and kills real-time token delivery
+# app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"] if _ALLOW_LAN else _ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1122,7 +1165,9 @@ SYSTEM_PROMPT = """You are ECHO, an advanced AI orchestration system running loc
 
 You think step-by-step, provide detailed technical answers, and format responses with markdown. When coding, include complete working examples. When researching, cite reasoning chains.
 
-You are running in LOCAL mode with full hardware access and zero cloud dependency."""
+You are running in LOCAL mode with full hardware access and zero cloud dependency.
+
+CRITICAL INSTRUCTION: You must ALWAYS respond entirely in English. Never use Serbian or any other language, regardless of the user's prompt."""
 
 # Lean prompt used for direct (non-pipeline) responses — prevents small models from
 # hallucinating fake "Research Chain / Developer's Code Snippet" section headers.
@@ -1131,52 +1176,93 @@ Answer the user's question directly, clearly, and concisely.
 Use markdown formatting where helpful (bold, lists, code blocks).
 When the user asks to CREATE, BUILD, MAKE, DESIGN, or WRITE something — generate the actual complete code or content immediately. Do not describe what you would create; create it.
 Do NOT add section headers like "Research Chain", "Critic's Evaluation", or "Developer's Code Snippet".
-Just respond naturally as a knowledgeable assistant would."""
+Just respond naturally as a knowledgeable assistant would.
+
+CRITICAL INSTRUCTION: You must ALWAYS respond entirely in English. Never use Serbian or any other language."""
 
 # Per-agent system prompts used inside run_subtask — override the generic SYSTEM_PROMPT
 # so each agent role behaves correctly (especially Developer: produce actual code, not descriptions)
 # v3.5: Enhanced with rich personality traits for each agent role
 AGENT_SPECIFIC_PROMPTS: dict[str, str] = {
-    "Developer": """You are the Developer — a meticulous, pragmatic code craftsman. Your personality: perfectionist about correctness, hates incomplete implementations, always writes production-ready code.
+    "Planner": """You are the PLANNER — the strategic mind of the ECHO multi-agent system.
 
-You are the Developer agent in ECHO — an expert code generator.
-Your ONLY job is to produce actual, complete, working code.
+ROLE: Decompose any user request into a concrete, ordered list of subtasks for the specialist agents below.
+You do NOT answer the user yourself. Your only output is a task plan.
 
-CRITICAL RULES:
-- When asked to create ANYTHING (animations, logos, UIs, functions, scripts, components), write the complete, runnable code IMMEDIATELY
-- Use HTML/CSS/JavaScript for visual/interactive things (logos, animations, UIs, games)
-- Use Python for algorithms, data processing, scripts
-- Include ALL necessary code — no placeholders, no "TODO", no "implement X later"
-- NEVER describe what you would create — CREATE IT directly with full code
-- NEVER say "I would implement X by..." — just implement X with the actual code
-- Format in markdown code blocks with the correct language tag (```html, ```python, etc.)
-- One self-contained working artifact is always preferred over fragmented pieces""",
+AGENTS YOU CAN ASSIGN TO:
+- Researcher  → facts, explanations, comparisons, research, background knowledge
+- Developer   → any code, scripts, HTML/CSS/JS, algorithms, implementation
+- Critic      → quality review, bug detection, improvement suggestions on Developer output
+- Supervisor  → final synthesis (always the last step when multiple agents ran)
 
-    "Researcher": """You are the Researcher — curious, rigorous, and evidence-driven. Your personality: analytical, skeptical of unverified claims, loves citing reasoning chains. You go deep on topics, explore multiple angles, and always acknowledge uncertainty where it exists.
+RULES:
+1. Always assign code tasks to Developer — never describe code, always generate it
+2. For simple factual questions assign only Researcher
+3. For coding tasks: Researcher (requirements/approach) → Developer (implementation) → Critic (review)
+4. Keep each subtask description short, specific, actionable
+5. Never assign yourself a subtask — Planner only plans, never executes
+6. List subtasks in dependency order""",
 
-You are the Researcher agent in ECHO. Your job is deep analysis and information gathering.
-Provide thorough findings with clear reasoning chains. When your research feeds a coding task,
-describe the best approach, relevant libraries, and key techniques the Developer should use.""",
+    "Researcher": """You are the RESEARCHER — the knowledge engine of the ECHO multi-agent system.
 
-    "Supervisor": """You are the Supervisor — decisive, coordination-focused, and result-oriented. Your personality: authoritative but fair, pragmatic, focused on synthesis. You cut through noise to deliver clean, integrated outputs. You NEVER fragment code — always present complete working implementations.
+ROLE: Gather deep, accurate information. Provide structured findings with clear reasoning chains.
+You feed your output directly to the Developer and Supervisor, so be precise and actionable.
 
-You are the Supervisor agent in ECHO. Synthesize agent results into a single complete, polished response.
-CRITICAL: If any agent produced code blocks, PRESERVE THEM EXACTLY — output the complete code directly.
-Do NOT summarize code into plain-text descriptions. Do NOT say "A function that does X" — show the actual function.
-Combine all agent outputs naturally, removing redundancy while keeping all technical content and code intact.""",
+RULES:
+1. Always state your reasoning, not just conclusions
+2. When researching for a coding task: identify the best libraries, patterns, and pitfalls the Developer must know
+3. Structure your output: use headings, bullet points, numbered steps
+4. Acknowledge uncertainty explicitly — never fabricate facts
+5. Be thorough but concise — no padding, no repetition
+6. End with a clear "KEY FINDINGS" summary section the Developer can act on immediately""",
 
-    "Critic": """You are the Critic agent in ECHO. Your personality: sharp, exacting, constructively harsh. You find edge cases others miss. You never approve mediocre work but always suggest concrete improvements.
+    "Developer": """You are the DEVELOPER — the implementation engine of the ECHO multi-agent system.
 
-Review the provided code or content carefully.
-Point out specific bugs, missing edge cases, or improvements needed.
-When you identify issues in code, provide the corrected version with fixes applied.""",
+ROLE: Write complete, working, production-ready code. Nothing less.
 
-    "Planner": """You are the Planner — methodical, structured, and systematic. You ALWAYS think step-by-step, break problems into clear subtasks, and never skip planning phases. Your personality: organized, thorough, forward-thinking. You speak in structured bullet points and always consider dependencies between tasks.
+RULES:
+1. ALWAYS output actual runnable code — never describe what you would write
+2. Use HTML/CSS/JavaScript for visual/interactive things (UIs, animations, games, dashboards)
+3. Use Python for algorithms, data processing, automation, scripts
+4. NEVER leave placeholders, TODOs, or "implement later" stubs — complete everything
+5. Format in fenced code blocks with correct language tag (```html, ```python, ```js, etc.)
+6. One self-contained artifact is better than fragments — include all dependencies inline
+7. After the code block, add a brief "HOW TO USE" note (1-3 lines max)
+8. If Researcher provided findings, incorporate them — don't ignore prior agent context""",
 
-You are the Planner agent in ECHO. Decompose user requests into clear subtasks for specialized agents.
-For code/visual creation tasks (animations, logos, UIs, components, scripts), always assign the PRIMARY task to Developer.
-Keep subtask descriptions concrete, specific, and actionable.""",
+    "Critic": """You are the CRITIC — the quality guardian of the ECHO multi-agent system.
+
+ROLE: Review Developer output for bugs, edge cases, security issues, and correctness.
+You are the last line of defense before the Supervisor synthesizes the final answer.
+
+RULES:
+1. Be constructive and specific — point to exact lines or logic, not vague complaints
+2. If you find bugs: provide the corrected code, not just a description of the fix
+3. Check for: logic errors, missing error handling, security issues, performance problems
+4. If the output is good, say so briefly and suggest one enhancement
+5. NEVER rewrite the entire solution unless it's fundamentally broken
+6. Output format: ISSUES (bullet list) → FIXED CODE (if needed) → VERDICT (Pass/Fix Required)""",
+
+    "Supervisor": """You are the SUPERVISOR — the synthesis and delivery layer of the ECHO multi-agent system.
+
+ROLE: Merge all agent outputs into one clean, complete, polished response for the user.
+You are the ONLY agent whose output reaches the user directly.
+
+RULES:
+1. PRESERVE all code blocks exactly as produced by Developer/Critic — never paraphrase code
+2. Remove redundancy between agent outputs — merge overlapping explanations
+3. Remove internal agent labels ([Researcher], [Developer], etc.) from your final output
+4. Produce a single coherent answer that feels like one expert wrote it
+5. If Developer produced code, it must appear in full in your output
+6. Start directly with the answer — no preamble like "Based on the agent results..."
+7. Keep the user's perspective: they want the answer, not a summary of what the agents did""",
 }
+
+_LANGUAGE_CONSTRAINT_SUFFIX = """
+
+CRITICAL INSTRUCTION: You must ALWAYS respond entirely in English. Never use Serbian or any other language, regardless of the language the user writes in."""
+
+AGENT_SPECIFIC_PROMPTS = {k: v + _LANGUAGE_CONSTRAINT_SUFFIX for k, v in AGENT_SPECIFIC_PROMPTS.items()}
 
 _agent_states: dict = {
     name: {
@@ -1524,8 +1610,15 @@ class ContextWindowManager:
     }
 
     def trim(self, messages: list[dict], model: str) -> list[dict]:
-        """Return messages trimmed to fit within model context limit."""
+        """Return messages trimmed to fit within model context limit, using ReMe compactor."""
         limit = self.MODEL_CONTEXT_LIMITS.get(model, self.MODEL_CONTEXT_LIMITS["default"])
+        _reme.token_limit = limit
+        
+        if _reme.check_context(messages):
+            _logger.info(f"[ReMe] Context over limit for {model}, compacting memory...")
+            return _reme.compact_memory(messages)
+            
+        # Fallback to legacy fast trimming if ReMe ignores
         threshold = int(limit * 0.85)
         try:
             token_estimate = len(json.dumps(messages)) // 4
@@ -1535,20 +1628,14 @@ class ContextWindowManager:
         if token_estimate <= threshold:
             return messages
 
-        # Separate system messages from conversational messages
         system_msgs = [m for m in messages if m.get("role") == "system"]
         non_system = [m for m in messages if m.get("role") != "system"]
 
         keep_recent = 4
         if len(non_system) <= keep_recent:
-            return messages  # Not enough to trim
+            return messages
 
-        # Keep last 4 non-system messages; drop middle ones
         trimmed = system_msgs + non_system[-keep_recent:]
-        _logger.info(
-            f"[ContextWindowManager] Trimmed {len(non_system)} → {keep_recent} msgs "
-            f"for model {model} (est {token_estimate} tokens > threshold {threshold})"
-        )
         return trimmed
 
 
@@ -1559,22 +1646,43 @@ _ctx_manager = ContextWindowManager()
 # Feature #8: Task Planning Agent
 # ─────────────────────────────────────────────────────────────────────────────
 
-PLANNER_SYSTEM = """You are the Planner agent in the ECHO multi-agent system. Your job is to decompose user requests into subtasks for specialized agents.
+PLANNER_SYSTEM = """You are the Planner agent in the ECHO multi-agent system. Decompose user requests into the MINIMUM set of subtasks needed.
 
 Available agents:
-- Supervisor: General coordination, synthesis, simple Q&A
-- Researcher: Deep analysis, comparisons, evaluations, reasoning
-- Developer: Code generation, debugging, technical implementations
-- Critic: Quality review, fact-checking, hallucination detection
+- Supervisor: Direct answers, synthesis, simple Q&A — use alone for straightforward questions
+- Researcher: Facts, analysis, comparisons, explanations — no code
+- Developer: Code generation, debugging, technical implementations — no research
+- Critic: Quality review — only add when output quality is critical
 
-Rules:
-1. For simple questions/greetings, return a single Supervisor subtask
-2. For complex tasks, break into 2-4 subtasks with appropriate agents
-3. Mark dependencies — a subtask can depend on previous subtask IDs
-4. Each subtask should be self-contained with clear instructions
+PARALLEL EXECUTION RULES (critical for speed):
+- Researcher and Developer MUST have depends_on:[] when both are used — they run simultaneously
+- Critic depends on Developer (or Researcher) — never on both
+- Supervisor always runs last, depends on all preceding tasks
+- NEVER make Developer depend on Researcher or vice versa
 
-You MUST respond with ONLY a JSON object in this exact format, no other text:
-{"subtasks": [{"id": "t1", "agent": "Developer", "task": "Write a Python function that...", "depends_on": []}, {"id": "t2", "agent": "Critic", "task": "Review the code from t1 for...", "depends_on": ["t1"]}]}"""
+ROUTING GUIDE:
+- Simple question / greeting → single Supervisor subtask
+- Code only → Developer → Supervisor (2 tasks, fast)
+- Research only → Researcher → Supervisor (2 tasks, fast)
+- Code + explanation → Researcher[] + Developer[] → Supervisor (3 tasks, parallel middle)
+- High-stakes output → Researcher[] + Developer[] → Critic[R+D] → Supervisor (4 tasks)
+
+Keep task descriptions SHORT and specific (1-2 sentences max).
+
+Respond with ONLY valid JSON, no other text:
+{"subtasks": [{"id": "t1", "agent": "Developer", "task": "Write Python scraper for...", "depends_on": []}, {"id": "t2", "agent": "Supervisor", "task": "Synthesize the code from t1 into a final response.", "depends_on": ["t1"]}]}"""
+
+
+# Per-agent token budgets — internal agents (Planner, Critic) produce short
+# structured output; only Developer and Supervisor need the full 2 k window.
+# Cutting these down is the single fastest way to reduce pipeline latency.
+AGENT_MAX_TOKENS: dict[str, int] = {
+    "Planner":    350,   # JSON plan only — no prose
+    "Researcher": 750,   # concise findings summary
+    "Developer":  1800,  # needs room for code
+    "Critic":     350,   # brief structured critique
+    "Supervisor": 1200,  # user-facing synthesis
+}
 
 
 class Subtask(BaseModel):
@@ -1654,8 +1762,41 @@ async def run_subtask(
     model = await select_model(subtask.task, AGENT_MODEL_MAP.get(agent))
     await vram_scheduler.request_model(model)
 
+    # Per-agent token budget overrides the pipeline-wide max_tokens.
+    # Internal agents (Planner, Critic) only need short outputs; giving them
+    # fewer tokens is the fastest single change to reduce latency.
+    effective_max_tokens = AGENT_MAX_TOKENS.get(agent, max_tokens)
+
     # Build messages for this subtask — use agent-specific prompt for better per-role behavior
     agent_system = AGENT_SPECIFIC_PROMPTS.get(agent, system_prompt)
+
+    # ── Skill injection ───────────────────────────────────────────────────────
+    # Find the 1-2 most relevant compiled skills for this subtask via keyword
+    # overlap, then append their full content to the agent system prompt.
+    # We cap at 2 skills and ~6 000 chars total to stay within small-model ctx.
+    if _compiled_skills_cache:
+        task_lower = subtask.task.lower()
+        task_words = set(re.split(r'\W+', task_lower)) - {"the","a","an","to","of","in","for","and","or","is","are","be","with","on","at","do","use","you","your","that","this","it","by","as","from","have","will","can","should","make","how","what","when","where","which"}
+
+        scored: list[tuple[float, dict]] = []
+        for skill in _compiled_skills_cache:
+            skill_text = (skill.get("name","") + " " + skill.get("description","") + " " + " ".join(skill.get("capabilities",[]))).lower()
+            skill_words = set(re.split(r'\W+', skill_text))
+            overlap = len(task_words & skill_words)
+            if overlap > 0:
+                scored.append((overlap, skill))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top_skills = [s for _, s in scored[:2]]
+
+        if top_skills:
+            skill_block = "\n\n".join(
+                f"## SKILL: {s['name']}\n{s['content'][:3000]}"
+                for s in top_skills
+            )
+            agent_system = agent_system + f"\n\n---\nThe following skill(s) are available and MUST guide your response:\n\n{skill_block}\n---"
+    # ─────────────────────────────────────────────────────────────────────────
+
     messages = [{"role": "system", "content": agent_system}]
 
     # Include results from dependencies
@@ -1716,29 +1857,10 @@ async def run_subtask(
             except Exception:
                 pass
 
-    # v3.5: Thought Graph for Researcher — generates parallel reasoning paths
-    if agent == "Researcher":
-        try:
-            thought_result = await thought_graph(subtask.task, model=model, n_paths=2)
-            if thought_result:
-                messages.append({
-                    "role": "system",
-                    "content": f"[THOUGHT GRAPH — best reasoning path selected]\n{thought_result}",
-                })
-        except Exception:
-            pass
-
-    # v3.5: Thinking Loop for complex tasks (> 80 chars)
-    if len(subtask.task) > 80:
-        try:
-            thought = await thinking_loop(subtask.task, model=model)
-            if thought:
-                messages.append({
-                    "role": "system",
-                    "content": f"[THINKING]\n{thought}",
-                })
-        except Exception:
-            pass
+    # NOTE: thought_graph (4 LLM calls) and thinking_loop (1 LLM call per agent)
+    # were removed — they added ~200s of pre-processing latency per pipeline run.
+    # Reasoning is now baked directly into each agent's AGENT_SPECIFIC_PROMPTS
+    # system prompt so agents reason inline without extra round-trips to Ollama.
 
     messages.append({"role": "user", "content": subtask.task})
 
@@ -1752,7 +1874,7 @@ async def run_subtask(
     subtask_success = False
     try:
         result = await asyncio.wait_for(
-            ollama_chat_text(messages, model=model, temperature=temperature, max_tokens=max_tokens),
+            ollama_chat_text(messages, model=model, temperature=temperature, max_tokens=effective_max_tokens),
             timeout=120,
         )
         subtask_success = bool(result and len(result.strip()) > 0)
@@ -1782,26 +1904,48 @@ async def run_subtask(
 
 # ── v3.5: Cognitive Architecture — Thinking Loop ─────────────────────────────
 
-async def thinking_loop(question: str, model: str) -> str:
-    """Chain-of-thought planning step before executing a complex subtask.
+def _needs_thinking(text: str) -> bool:
+    """Return True when a task benefits from explicit CoT reasoning."""
+    if len(text) > 80:
+        return True
+    patterns = [
+        r'\b(why|how|explain|compare|analyze|evaluate|design|implement|debug|optimize|describe)\b',
+        r'\b(step.by.step|walk me through|break.?down|in detail|what is|what are)\b',
+        r'\b(algorithm|architecture|tradeoff|pros.and.cons|difference between)\b',
+        r'\?.*\?',  # multiple questions
+    ]
+    return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
-    Sends a CoT prompt to get a step-by-step thought chain, which is then
-    prepended to the subtask messages so the agent reasons before responding.
+
+async def thinking_loop(question: str, model: str) -> str:
+    """Structured Chain-of-Thought reasoning step before executing a subtask.
+
+    Uses explicit phase labels (OBSERVE / ANALYZE / PLAN / VERIFY) that align
+    with the ThinkingSteps UI phases so the agent reasons systematically before
+    generating its final answer.
     """
     cot_messages = [
         {
             "role": "system",
-            "content": "You are a careful reasoning engine. Break problems into clear logical steps.",
+            "content": (
+                "You are a precise internal reasoning engine for the ECHO AI assistant. "
+                "Analyze the task using exactly these four phases — be concise (2-3 sentences each):\n\n"
+                "OBSERVE: What is the user actually asking? What context or constraints matter?\n"
+                "ANALYZE: What are the key sub-problems, unknowns, or dependencies?\n"
+                "PLAN: What specific steps will produce the most accurate and complete answer?\n"
+                "VERIFY: What could go wrong or be misunderstood? Are there edge cases?\n\n"
+                "Output only the four labeled phases. Do not write the final answer."
+            ),
         },
         {
             "role": "user",
-            "content": f"Break this problem into steps. Think step by step before answering:\n\n{question}",
+            "content": f"Apply structured reasoning to this task:\n\n{question}",
         },
     ]
     try:
         thought = await asyncio.wait_for(
-            ollama_chat_text(cot_messages, model=model, temperature=0.4, max_tokens=512),
-            timeout=30,
+            ollama_chat_text(cot_messages, model=model, temperature=0.3, max_tokens=600),
+            timeout=35,
         )
         return thought or ""
     except Exception as e:
@@ -2452,6 +2596,7 @@ class ChatRequest(BaseModel):
     no_cache: Optional[bool] = False
     workflow: Optional[dict] = None  # v3.2: custom workflow definition
     project_id: Optional[str] = None  # v3.5: AI Project Mode — inject project context
+    channel_id: Optional[str] = None  # v3.8: Agentchattr channel mesh ID
     images: Optional[list[str]] = None  # base64 image strings attached to latest user message
     attachments: Optional[list[dict]] = None  # v3.7: file attachments {name, type, content}
 
@@ -2525,30 +2670,82 @@ class SkillToolsRequest(BaseModel):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _gpu_info_via_nvidia_smi() -> dict | None:
+    """Query nvidia-smi directly.
+
+    Fallback for when GPUtil is missing or broken — it's unmaintained and simply
+    absent in some environments. Reporting "no GPU" is not harmless: it silently
+    disables the VRAM scheduler and makes the Cookbook recommend models as if the
+    machine were CPU-only, which is how a 14B model ends up thrashing an 11GB card.
+    """
+    try:
+        out = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,memory.used,utilization.gpu,temperature.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if out.returncode != 0 or not out.stdout.strip():
+            return None
+        # First GPU only, matching the GPUtil path.
+        parts = [p.strip() for p in out.stdout.strip().splitlines()[0].split(",")]
+        if len(parts) < 5:
+            return None
+        return {
+            "name": parts[0],
+            "vram_total_mb": int(float(parts[1])),
+            "vram_used_mb": int(float(parts[2])),
+            "gpu_usage_percent": float(parts[3]),
+            "temperature_c": float(parts[4]),
+        }
+    except Exception:
+        return None
+
+
 def get_gpu_info() -> dict | None:
     global _gpu_cache
     now = time.time()
     if now - _gpu_cache["ts"] < _GPU_CACHE_TTL:
         return _gpu_cache["data"]
+
+    result: dict | None = None
     try:
         import GPUtil
         gpus = GPUtil.getGPUs()
-        if not gpus:
-            _gpu_cache = {"data": None, "ts": now}
-            return None
-        gpu = gpus[0]
-        result = {
-            "name": gpu.name,
-            "vram_total_mb": int(gpu.memoryTotal),
-            "vram_used_mb": int(gpu.memoryUsed),
-            "gpu_usage_percent": round(gpu.load * 100, 1),
-            "temperature_c": gpu.temperature,
-        }
-        _gpu_cache = {"data": result, "ts": now}
-        return result
+        if gpus:
+            gpu = gpus[0]
+            result = {
+                "name": gpu.name,
+                "vram_total_mb": int(gpu.memoryTotal),
+                "vram_used_mb": int(gpu.memoryUsed),
+                "gpu_usage_percent": round(gpu.load * 100, 1),
+                "temperature_c": gpu.temperature,
+            }
     except Exception:
-        _gpu_cache = {"data": None, "ts": now}
-        return None
+        result = None
+
+    if result is None:
+        result = _gpu_info_via_nvidia_smi()
+
+    _gpu_cache = {"data": result, "ts": now}
+    return result
+
+
+def gpu_layer_options() -> dict:
+    """GPU offload options for Ollama.
+
+    We deliberately do NOT pin `num_gpu`. Ollama measures free VRAM and picks how
+    many layers fit; hardcoding `num_gpu: 99` overrides that and forces a full
+    offload even when the model is far larger than the card. On an 11GB GPU with a
+    ~15GB model that turns a 5-second reply into minutes of thrashing. Letting
+    Ollama decide is both faster and safer across different hardware.
+    """
+    return {}
 
 
 def get_cpu_temp() -> float | None:
@@ -2628,7 +2825,6 @@ async def ollama_stream(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
-            "num_gpu": 99,
             "num_keep": 256,  # v3.5: KV cache reuse — keep first 256 tokens (system prompt)
         },
         "keep_alive": "10m",
@@ -2643,7 +2839,14 @@ async def ollama_stream(
                 error_body = await response.aread()
                 error_msg = error_body.decode("utf-8", errors="replace")
                 _logger.error(f"Ollama stream error {response.status_code}: {error_msg}")
-                yield f'data: {{"error": "Ollama error {response.status_code}: {error_msg}"}}\n\n'
+                status_code = response.status_code
+                if status_code == 404:
+                    err_payload = '{"error": "Model not found in Ollama. Run: ollama pull <model>", "error_type": "model_missing"}'
+                elif status_code == 503:
+                    err_payload = '{"error": "Ollama is not running. Start it with: ollama serve", "error_type": "connection"}'
+                else:
+                    err_payload = f'{{"error": "Ollama returned HTTP {status_code}", "error_type": "http_error"}}'
+                yield f'data: {err_payload}\n\n'
                 yield "data: [DONE]\n\n"
                 return
 
@@ -2679,11 +2882,20 @@ async def ollama_stream(
                     continue
 
     except httpx.ConnectError:
-        yield 'data: {"error": "Cannot connect to Ollama. Is it running? Run: ollama serve"}\n\n'
+        yield 'data: {"error": "Ollama is not running. Start it with: ollama serve", "error_type": "connection"}\n\n'
+        yield "data: [DONE]\n\n"
+    except httpx.ReadTimeout:
+        yield 'data: {"error": "Ollama timed out — the model may still be loading. Try again in a few seconds.", "error_type": "timeout"}\n\n'
+        yield "data: [DONE]\n\n"
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            yield f'data: {{"error": "Model not found in Ollama. Run: ollama pull {model}", "error_type": "model_missing"}}\n\n'
+        else:
+            yield f'data: {{"error": "Ollama HTTP error {e.response.status_code}", "error_type": "http_error"}}\n\n'
         yield "data: [DONE]\n\n"
     except Exception as e:
         _logger.error(f"Stream error: {e}")
-        yield f'data: {{"error": "Stream error: {str(e)}"}}\n\n'
+        yield f'data: {{"error": "Stream error: {str(e)}", "error_type": "unknown"}}\n\n'
         yield "data: [DONE]\n\n"
 
 
@@ -2697,7 +2909,7 @@ async def ollama_chat_json(messages: list[dict], model: str | None = None) -> di
         "messages": messages,
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.3, "num_predict": 512, "num_gpu": 99, "num_keep": 256},
+        "options": {"temperature": 0.3, "num_predict": 512, "num_keep": 256},
         "keep_alive": "10m",
     }
 
@@ -2744,7 +2956,6 @@ async def ollama_chat_text(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
-            "num_gpu": 99,
             "num_keep": 256,  # v3.5: KV cache reuse
         },
         "keep_alive": "10m",
@@ -2760,6 +2971,55 @@ async def ollama_chat_text(
     except Exception as e:
         _logger.error(f"Ollama text call failed: {e}")
         return ""
+
+
+async def ollama_chat_stream_tokens(
+    messages: list[dict],
+    model: str | None = None,
+    temperature: float = 0.7,
+    max_tokens: int = 2048,
+    on_token: "asyncio.Queue | None" = None,
+) -> str:
+    """Streaming Ollama call that fires on_token queue per token and returns full text.
+    Used to pipe agent thought tokens into the SSE stream in real-time.
+    """
+    model = model or AGENT_MODEL_MAP.get("default", "llama3.1:8b")
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "num_keep": 256,
+        },
+        "keep_alive": "10m",
+    }
+
+    client = await get_ollama_client()
+    full_text = ""
+    try:
+        async with client.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload, timeout=120) as resp:
+            async for line in resp.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    if chunk.get("done"):
+                        break
+                    token = chunk.get("message", {}).get("content", "")
+                    if token:
+                        full_text += token
+                        if on_token is not None:
+                            await on_token.put(token)
+                except Exception:
+                    continue
+    except Exception as e:
+        _logger.error(f"Ollama stream tokens failed: {e}")
+    finally:
+        if on_token is not None:
+            await on_token.put(None)  # Sentinel — signals stream done
+    return full_text
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3022,27 +3282,29 @@ import contextlib
 
 
 def _execute_code_in_process(code: str, result_queue: multiprocessing.Queue):
-    """Run code in isolated subprocess with restricted globals."""
+    """Run restricted Python in this isolated child process.
+
+    The child applies OS resource limits where available, then a static check
+    rejects imports and underscore access, then the code runs against a fixed
+    safe-builtins namespace. See code_sandbox for what this does and does not
+    guarantee — it is a restriction layer plus process isolation, not a jail.
+    """
+    import code_sandbox
+
+    code_sandbox.apply_resource_limits()
+
+    try:
+        code_sandbox.check_code(code)
+    except code_sandbox.UnsafeCode as e:
+        # Rejected before running — the dangerous call never happened.
+        result_queue.put({"success": False, "stdout": "", "stderr": f"Blocked: {e}"})
+        return
+
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
-    safe_globals = {
-        "__builtins__": __builtins__,
-        "print": print, "range": range, "len": len,
-        "list": list, "dict": dict, "set": set, "tuple": tuple,
-        "int": int, "float": float, "str": str, "bool": bool,
-        "abs": abs, "sum": sum, "min": min, "max": max,
-        "enumerate": enumerate, "zip": zip, "round": round,
-        "sorted": sorted, "reversed": reversed, "map": map, "filter": filter,
-        "divmod": divmod, "pow": pow,
-        "math": __import__("math"),
-        "json": __import__("json"),
-        "re": __import__("re"),
-        "random": __import__("random"),
-        "datetime": __import__("datetime"),
-    }
     try:
         with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
-            exec(code, safe_globals)
+            exec(compile(code, "<sandbox>", "exec"), code_sandbox.safe_globals())
         result_queue.put({"success": True, "stdout": stdout_buf.getvalue(), "stderr": stderr_buf.getvalue()})
     except Exception as e:
         result_queue.put({"success": False, "stdout": stdout_buf.getvalue(), "stderr": str(e)})
@@ -3297,18 +3559,16 @@ _SIMPLE_PATTERNS = re.compile(
 
 
 def should_use_pipeline(text: str) -> bool:
-    """Decide if a message is complex enough to warrant the planning pipeline."""
+    """Decide if a message is complex enough to warrant the planning pipeline.
+
+    Fires for almost everything except trivial greetings/acks — the multi-agent
+    pipeline produces significantly better results even for medium-length tasks.
+    """
     text = text.strip()
-    if len(text) < 120:
-        return False  # Short/medium messages go direct
+    if len(text) < 15:
+        return False  # Pure one-word inputs
     if _SIMPLE_PATTERNS.match(text):
-        return False  # Greetings/acks go direct
-    if text.endswith("?") and len(text) < 200:
-        return False  # Conversational questions go direct
-    # Must have at least 2 sentences or technical density to justify planning
-    sentences = len(re.findall(r'[.!?]+', text))
-    if sentences < 2:
-        return False
+        return False  # Greetings / acks
     return True
 
 
@@ -3337,6 +3597,17 @@ def estimate_complexity(text: str) -> int:
         score += 1
 
     return min(score, 3)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Weather SSE helper — prepends a weather_data event to any inner generator
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def prepend_weather(weather_payload: dict, inner_gen):
+    """Yield weather SSE event first, then delegate to the inner generator."""
+    yield f"data: {json.dumps({'type': 'weather_data', 'data': weather_payload})}\n\n"
+    async for chunk in inner_gen:
+        yield chunk
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3393,6 +3664,18 @@ async def chat(req: ChatRequest):
     user_messages = [m for m in req.messages if m.role == "user"]
     user_text = user_messages[-1].content if user_messages else ""
 
+    # ── v3.8: Agent @mentions & Channels ────────────────────────────────
+    if req.channel_id:
+        _alfred.add_node("Channel", {"id": req.channel_id, "last_active": datetime.now(timezone.utc).isoformat()})
+    
+    _mention_match = re.search(r'@([a-zA-Z0-9_]+)', user_text)
+    if _mention_match:
+        _target = _mention_match.group(1)
+        if _target in PIPELINE:
+            req.model = AGENT_MODEL_MAP.get(_target, AGENT_MODEL_MAP.get("default"))
+            req.enable_planning = False  # Explicit mention bypasses planning
+            _logger.info(f"[Mesh] Routing explicitly to @{_target} (channel: {req.channel_id})")
+
     # ── v3.7: Inject file attachment content into user message ──────────
     if req.attachments:
         attachment_blocks = []
@@ -3410,6 +3693,24 @@ async def chat(req: ChatRequest):
                 if msg["role"] == "user":
                     msg["content"] = "\n\n".join(attachment_blocks) + "\n\n" + msg["content"]
                     break
+
+    # ── Weather pre-fetch for SSE injection ─────────────────────────────
+    _weather_payload: dict | None = None
+    _weather_keywords = {"weather", "temperature", "forecast", "rain", "snow", "wind", "humidity", "sunny", "cloudy"}
+    if any(kw in user_text.lower() for kw in _weather_keywords):
+        _city_match = re.search(
+            r'\b(?:in|at|for)\s+([A-Z][a-zA-Z\s]{2,25}?)(?:\?|$|,|\s+today|\s+now|\s+right)',
+            user_text, re.IGNORECASE
+        )
+        if not _city_match:
+            _city_match = re.search(r'([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*)', user_text)
+        if _city_match:
+            try:
+                _wx = await get_weather(_city_match.group(1).strip())
+                if _wx.get("success"):
+                    _weather_payload = _wx
+            except Exception:
+                pass
 
     # ── Feature #6: Inject relevant memories ────────────────────────────
     try:
@@ -3454,8 +3755,9 @@ async def chat(req: ChatRequest):
                 yield f"data: {json.dumps(meta)}\n\n"
                 yield "data: [DONE]\n\n"
 
+            gen = prepend_weather(_weather_payload, cached_stream()) if _weather_payload else cached_stream()
             return StreamingResponse(
-                cached_stream(),
+                gen,
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
@@ -3479,24 +3781,36 @@ async def chat(req: ChatRequest):
                     "keep_alive": "10m",
                 }
                 _client = await get_ollama_client()
-                async with _client.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload, timeout=120.0) as resp:
-                    async for line in resp.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                            if chunk.get("done"):
-                                yield "data: [DONE]\n\n"
-                                break
-                            content = chunk.get("message", {}).get("content", "")
-                            if content:
-                                sse = {"choices": [{"delta": {"content": content}}]}
-                                yield f"data: {json.dumps(sse)}\n\n"
-                        except Exception:
-                            continue
+                try:
+                    async with _client.stream("POST", f"{OLLAMA_URL}/api/chat", json=payload, timeout=120.0) as resp:
+                        async for line in resp.aiter_lines():
+                            if not line.strip():
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                                if chunk.get("done"):
+                                    yield "data: [DONE]\n\n"
+                                    break
+                                content = chunk.get("message", {}).get("content", "")
+                                if content:
+                                    sse = {"choices": [{"delta": {"content": content}}]}
+                                    yield f"data: {json.dumps(sse)}\n\n"
+                            except Exception:
+                                continue
+                except httpx.ConnectError:
+                    yield 'data: {"error": "Cannot connect to Ollama for vision — is it running?", "error_type": "connection"}\n\n'
+                    yield "data: [DONE]\n\n"
+                except httpx.ReadTimeout:
+                    yield 'data: {"error": "Vision model timed out — the model may still be loading.", "error_type": "timeout"}\n\n'
+                    yield "data: [DONE]\n\n"
+                except Exception as e:
+                    _logger.error(f"Vision stream error: {e}")
+                    yield f'data: {{"error": "Vision error: {str(e)}", "error_type": "unknown"}}\n\n'
+                    yield "data: [DONE]\n\n"
 
+            gen = prepend_weather(_weather_payload, vision_stream()) if _weather_payload else vision_stream()
             return StreamingResponse(
-                vision_stream(),
+                gen,
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
@@ -3537,8 +3851,9 @@ async def chat(req: ChatRequest):
                 yield f"data: {json.dumps(sse_data)}\n\n"
                 yield "data: [DONE]\n\n"
 
+            gen = prepend_weather(_weather_payload, wf_stream()) if _weather_payload else wf_stream()
             return StreamingResponse(
-                wf_stream(),
+                gen,
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
             )
@@ -3583,55 +3898,165 @@ async def chat(req: ChatRequest):
 
                                 # Emit start steps for all ready agents
                                 for st in ready:
-                                    start_step = {"type": "step", "agent": st.agent, "text": st.task[:60], "status": "start"}
+                                    _phase_map = {
+                                        "Planner": ("PLANNING", "Decomposing task into subtasks"),
+                                        "Researcher": ("ANALYZING", "Gathering context and research"),
+                                        "Developer": ("EXECUTING", "Writing code and implementation"),
+                                        "Critic": ("VERIFYING", "Reviewing output for accuracy"),
+                                        "Supervisor": ("THINKING", "Coordinating agent pipeline"),
+                                    }
+                                    _phase, _detail = _phase_map.get(st.agent, ("EXECUTING", st.task[:80]))
+                                    start_step = {
+                                        "type": "step",
+                                        "agent": st.agent,
+                                        "text": st.task[:60],
+                                        "status": "start",
+                                        "phase": _phase,
+                                        "detail": _detail,
+                                    }
                                     yield f"data: {json.dumps(start_step)}\n\n"
 
-                                batch = await asyncio.gather(
-                                    *[run_subtask(st, SYSTEM_PROMPT + depth_instruction, subtask_results, temperature, max_tokens)
-                                      for st in ready],
-                                    return_exceptions=True,
-                                )
-                                for res in batch:
-                                    if isinstance(res, Exception):
-                                        continue
-                                    task_id, text = res
-                                    subtask_results[task_id] = text
-                                    completed.add(task_id)
-                                    agent_name = next(
-                                        (st.agent for st in plan.subtasks if st.id == task_id),
-                                        "Agent"
+                                # Run each ready agent with token streaming
+                                # We serialize here (one at a time) so the SSE queue doesn't interleave
+                                for st in ready:
+                                    agent_model = AGENT_MODEL_MAP.get(st.agent, AGENT_MODEL_MAP.get("default"))
+                                    _agent_system = AGENT_SPECIFIC_PROMPTS.get(st.agent, SYSTEM_PROMPT + depth_instruction)
+                                    _agent_msgs = [
+                                        {"role": "system", "content": _agent_system},
+                                        *[{"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]}
+                                          for m in messages if m["role"] != "system"],
+                                        {"role": "user", "content": st.task},
+                                    ]
+                                    # If this agent depends on previous results, inject them as context
+                                    if st.depends_on and subtask_results:
+                                        context_parts = [f"[{plan.subtasks[i].agent if i < len(plan.subtasks) else 'Agent'}]: {subtask_results.get(dep, '')}"
+                                                         for i, dep in enumerate(st.depends_on) if dep in subtask_results]
+                                        if context_parts:
+                                            _agent_msgs.insert(-1, {"role": "system", "content": "Previous agent results:\n" + "\n\n".join(context_parts)})
+
+                                    # ── CoT: inject structured reasoning before LLM call ──────────
+                                    if st.agent == "Researcher":
+                                        # Thought Graph: parallel reasoning paths for research tasks
+                                        think_start = {"type": "step", "agent": st.agent, "text": "Exploring reasoning paths", "status": "start", "phase": "THINKING", "detail": "Generating multi-perspective analysis"}
+                                        yield f"data: {json.dumps(think_start)}\n\n"
+                                        try:
+                                            _thought = await asyncio.wait_for(
+                                                thought_graph(st.task, model=agent_model, n_paths=3),
+                                                timeout=90,
+                                            )
+                                            if _thought:
+                                                _agent_msgs.insert(-1, {"role": "system", "content": f"[THOUGHT GRAPH — best reasoning path]\n{_thought}"})
+                                        except Exception:
+                                            pass
+                                        think_done = {"type": "step", "agent": st.agent, "text": "Reasoning paths evaluated", "status": "done", "phase": "THINKING"}
+                                        yield f"data: {json.dumps(think_done)}\n\n"
+                                    elif _needs_thinking(st.task):
+                                        # Structured CoT for complex tasks
+                                        think_start = {"type": "step", "agent": st.agent, "text": "Structured reasoning", "status": "start", "phase": "THINKING", "detail": "OBSERVE → ANALYZE → PLAN → VERIFY"}
+                                        yield f"data: {json.dumps(think_start)}\n\n"
+                                        try:
+                                            _thought = await asyncio.wait_for(
+                                                thinking_loop(st.task, model=agent_model),
+                                                timeout=40,
+                                            )
+                                            if _thought:
+                                                _agent_msgs.insert(-1, {"role": "system", "content": f"[REASONING]\n{_thought}"})
+                                        except Exception:
+                                            pass
+                                        think_done = {"type": "step", "agent": st.agent, "text": "Reasoning complete", "status": "done", "phase": "THINKING"}
+                                        yield f"data: {json.dumps(think_done)}\n\n"
+
+                                    token_queue: asyncio.Queue = asyncio.Queue()
+
+                                    # Start the LLM stream coroutine
+                                    llm_task = asyncio.create_task(
+                                        ollama_chat_stream_tokens(
+                                            _agent_msgs,
+                                            model=agent_model,
+                                            temperature=temperature,
+                                            max_tokens=max_tokens,
+                                            on_token=token_queue,
+                                        )
                                     )
-                                    # Emit done step for this agent
-                                    done_step = {"type": "step", "agent": agent_name, "text": "Completed", "status": "done"}
+
+                                    # Drain the token queue and emit thought_token SSE events
+                                    while True:
+                                        token = await token_queue.get()
+                                        if token is None:  # Sentinel
+                                            break
+                                        thought_evt = {"type": "thought_token", "agent": st.agent, "token": token}
+                                        yield f"data: {json.dumps(thought_evt)}\n\n"
+
+                                    text = await llm_task
+                                    subtask_results[st.id] = text
+                                    completed.add(st.id)
+                                    agent_name = st.agent
+
+                                    # Emit done step for this agent with CoT phase
+                                    _done_phase_map = {
+                                        "Planner": "PLANNING",
+                                        "Researcher": "ANALYZING",
+                                        "Developer": "EXECUTING",
+                                        "Critic": "VERIFYING",
+                                        "Supervisor": "FINALIZING",
+                                    }
+                                    _done_label_map = {
+                                        "Planner":    "Plan ready",
+                                        "Researcher": "Research complete",
+                                        "Developer":  "Implementation ready",
+                                        "Critic":     "Review complete",
+                                        "Supervisor": "Response synthesized",
+                                    }
+                                    _word_count = len(text.split())
+                                    done_step = {
+                                        "type": "step",
+                                        "agent": agent_name,
+                                        "text": _done_label_map.get(agent_name, "Complete"),
+                                        "status": "done",
+                                        "phase": _done_phase_map.get(agent_name, "EXECUTING"),
+                                        "detail": f"{_word_count} word{'s' if _word_count != 1 else ''} · {text[:80].strip()}{'…' if len(text) > 80 else ''}",
+                                    }
                                     yield f"data: {json.dumps(done_step)}\n\n"
+                                    # NOTE: agent outputs are intentionally NOT emitted as
+                                    # choices.delta.content — they live in ThinkingSteps only.
+                                    # Only the Supervisor synthesis reaches the main message.
+                                    full_output_parts.append(text)
 
-                                    chunk = f"\n\n---\n**[{agent_name}]**\n{text}\n"
-                                    full_output_parts.append(chunk)
-                                    sse_data = {"choices": [{"delta": {"content": chunk}}]}
-                                    yield f"data: {json.dumps(sse_data)}\n\n"
-
-                            # Synthesis step
-                            if len(subtask_results) > 1:
-                                sup_step = {"type": "step", "agent": "Supervisor", "text": "Synthesizing agent results", "status": "start"}
-                                yield f"data: {json.dumps(sup_step)}\n\n"
-                                parts_str = "\n\n".join(
-                                    f"**[{st.agent}]**\n{subtask_results.get(st.id, '')}"
-                                    for st in plan.subtasks
+                            # ── Supervisor synthesis — streams token-by-token to main message ──
+                            parts_str = "\n\n".join(
+                                f"[{st.agent}]:\n{subtask_results.get(st.id, '')}"
+                                for st in plan.subtasks
+                                if st.id in subtask_results
+                            )
+                            sup_step = {"type": "step", "agent": "Supervisor", "text": "Synthesizing results", "status": "start", "phase": "FINALIZING", "detail": "Merging agent outputs into final response"}
+                            yield f"data: {json.dumps(sup_step)}\n\n"
+                            synth_msgs = [
+                                {"role": "system", "content": AGENT_SPECIFIC_PROMPTS.get("Supervisor", "Synthesize agent results.")},
+                                {"role": "user", "content": f"User request: {user_text}\n\nAgent outputs:\n{parts_str}"},
+                            ]
+                            synth_queue: asyncio.Queue = asyncio.Queue()
+                            synth_task = asyncio.create_task(
+                                ollama_chat_stream_tokens(
+                                    synth_msgs,
+                                    model=AGENT_MODEL_MAP.get("Supervisor", "llama3.2:3b"),
+                                    temperature=0.5,
+                                    max_tokens=max_tokens,
+                                    on_token=synth_queue,
                                 )
-                                synth_msgs = [
-                                    {"role": "system", "content": AGENT_SPECIFIC_PROMPTS.get("Supervisor", "Synthesize agent results.")},
-                                    {"role": "user", "content": f"Question: {user_text}\n\nAgent results:\n{parts_str}"},
-                                ]
-                                synth = await ollama_chat_text(synth_msgs, model=AGENT_MODEL_MAP.get("Supervisor", "llama3.2:3b"))
-                                if synth:
-                                    sup_done = {"type": "step", "agent": "Supervisor", "text": "Synthesis complete", "status": "done"}
-                                    yield f"data: {json.dumps(sup_done)}\n\n"
-                                    sep = "\n\n---\n**[Supervisor — Final Synthesis]**\n"
-                                    full_output_parts.append(sep + synth)
-                                    sse_data = {"choices": [{"delta": {"content": sep + synth}}]}
-                                    yield f"data: {json.dumps(sse_data)}\n\n"
+                            )
+                            synth_full = ""
+                            while True:
+                                tok = await synth_queue.get()
+                                if tok is None:
+                                    break
+                                synth_full += tok
+                                yield f"data: {json.dumps({'choices': [{'delta': {'content': tok}}]})}\n\n"
+                            await synth_task
+                            sup_done = {"type": "step", "agent": "Supervisor", "text": "Done", "status": "done", "phase": "FINALIZING", "detail": f"{len(synth_full.split())} words"}
+                            yield f"data: {json.dumps(sup_done)}\n\n"
+                            full_output_parts.append(synth_full)
 
-                            merged = "".join(full_output_parts)
+                            merged = synth_full if synth_full else "\n\n".join(full_output_parts)
                             response_cache.put(model, messages, temperature, merged)
                             if len(messages) >= 6:
                                 asyncio.create_task(auto_extract_memories(
@@ -3642,8 +4067,9 @@ async def chat(req: ChatRequest):
                         finally:
                             yield "data: [DONE]\n\n"
 
+                    gen = prepend_weather(_weather_payload, progressive_pipeline_stream()) if _weather_payload else progressive_pipeline_stream()
                     return StreamingResponse(
-                        progressive_pipeline_stream(),
+                        gen,
                         media_type="text/event-stream",
                         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
                     )
@@ -3677,8 +4103,9 @@ async def chat(req: ChatRequest):
                         yield f"data: {json.dumps(sse_data)}\n\n"
                         yield "data: [DONE]\n\n"
 
+                    gen = prepend_weather(_weather_payload, pipeline_stream()) if _weather_payload else pipeline_stream()
                     return StreamingResponse(
-                        pipeline_stream(),
+                        gen,
                         media_type="text/event-stream",
                         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
                     )
@@ -3719,8 +4146,9 @@ async def chat(req: ChatRequest):
                     sse_data = {"choices": [{"delta": {"content": spec_result}}]}
                     yield f"data: {json.dumps(sse_data)}\n\n"
                     yield "data: [DONE]\n\n"
+                gen = prepend_weather(_weather_payload, spec_stream()) if _weather_payload else spec_stream()
                 return StreamingResponse(
-                    spec_stream(),
+                    gen,
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
                 )
@@ -3733,15 +4161,52 @@ async def chat(req: ChatRequest):
     _agent_states[active_agent]["lastActive"] = datetime.now(timezone.utc).isoformat()
 
     async def stream_and_track():
-        # Emit a single step event for direct streaming
-        direct_step = {"type": "step", "agent": active_agent, "text": "Processing request", "status": "start"}
-        yield f"data: {json.dumps(direct_step)}\n\n"
+        # ── Phase 1: CoT reasoning — always runs on every prompt ─────────────
+        yield f"data: {json.dumps({'type': 'step', 'agent': active_agent, 'text': 'Analyzing your request', 'status': 'start', 'phase': 'THINKING', 'detail': 'OBSERVE → ANALYZE → PLAN → VERIFY'})}\n\n"
+
+        thought = ""
+        try:
+            thought = await asyncio.wait_for(
+                thinking_loop(user_text, model=model),
+                timeout=30,
+            )
+        except Exception:
+            pass
+
+        # Extract a short preview from the OBSERVE or first meaningful line
+        thought_preview = ""
+        if thought:
+            for line in thought.split("\n"):
+                line = line.strip()
+                if line and not line.startswith("#") and len(line) > 10:
+                    thought_preview = line[:120]
+                    break
+
+        yield f"data: {json.dumps({'type': 'step', 'agent': active_agent, 'text': 'Reasoning complete', 'status': 'done', 'phase': 'THINKING', 'detail': thought_preview or 'Ready to respond'})}\n\n"
+
+        # Build effective message list, injecting CoT reasoning if produced
+        effective_messages = list(messages)
+        if thought:
+            # Insert reasoning as system context before the last user message
+            effective_messages = effective_messages[:-1] + [
+                {"role": "system", "content": f"[REASONING — use this to inform your response]\n{thought}"},
+                effective_messages[-1],
+            ]
+
+        # ── Phase 2: Planning (emit only if CoT has a PLAN section) ──────────
+        if thought and "PLAN" in thought.upper():
+            yield f"data: {json.dumps({'type': 'step', 'agent': active_agent, 'text': 'Plan ready', 'status': 'start', 'phase': 'PLANNING', 'detail': 'Executing response strategy'})}\n\n"
+            yield f"data: {json.dumps({'type': 'step', 'agent': active_agent, 'text': 'Executing plan', 'status': 'done', 'phase': 'PLANNING'})}\n\n"
+
+        # ── Phase 3: Stream the actual LLM response ───────────────────────────
+        yield f"data: {json.dumps({'type': 'step', 'agent': active_agent, 'text': 'Generating response', 'status': 'start', 'phase': 'EXECUTING', 'detail': 'Streaming answer...'})}\n\n"
+
         token_count = 0
         full_response = ""
         try:
             async for chunk in ollama_stream(
                 model=model,
-                messages=messages,
+                messages=effective_messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
             ):
@@ -3756,6 +4221,7 @@ async def chat(req: ChatRequest):
                 yield chunk
         finally:
             elapsed_ms = round((time.time() - request_start) * 1000)
+            word_count = len(full_response.split())
             _agent_states[active_agent]["status"] = "idle"
             _agent_states[active_agent]["currentTask"] = None
             _agent_states[active_agent]["tokensProcessed"] += token_count
@@ -3773,8 +4239,13 @@ async def chat(req: ChatRequest):
                     messages + [{"role": "assistant", "content": full_response}]
                 ))
 
+        # ── Phase 4: Finalizing ───────────────────────────────────────────────
+        _plural = "s" if word_count != 1 else ""
+        yield f"data: {json.dumps({'type': 'step', 'agent': active_agent, 'text': 'Complete', 'status': 'done', 'phase': 'FINALIZING', 'detail': f'{word_count} word{_plural} · {elapsed_ms}ms'})}\n\n"
+
+    gen = prepend_weather(_weather_payload, stream_and_track()) if _weather_payload else stream_and_track()
     return StreamingResponse(
-        stream_and_track(),
+        gen,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
@@ -3803,12 +4274,7 @@ def clear_cache():
 
 @app.post("/api/memory/store")
 async def store_memory(req: MemoryStoreRequest):
-    """Store a memory of a specific type."""
-    coll = _get_memory_collection(req.type)
-    if coll is None:
-        raise HTTPException(status_code=503, detail="Memory system not available")
-
-    # v3.6: Redact PII/secrets before persisting to memory
+    """Store a memory using Hindsight Engine and add to semantic graph."""
     content = req.content
     try:
         content_clean, redacted_types = redact_sensitive(content)
@@ -3818,38 +4284,49 @@ async def store_memory(req: MemoryStoreRequest):
     except Exception:
         pass
 
-    mem_id = f"{req.type[:3]}-{int(time.time() * 1000)}"
-    metadata = {
-        "summary": (req.summary or content[:200]),
-        "tags": ",".join(req.tags or []),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
+    # Track node in graph map
+    _alfred.add_node("Memory", {"content": content[:50], "timestamp": datetime.now(timezone.utc).isoformat()})
 
     try:
-        coll.upsert(documents=[content], ids=[mem_id], metadatas=[metadata])
-        return {"status": "ok", "id": mem_id, "type": req.type}
+        await _hindsight.retain(bank_id=req.type, content=content, context=req.summary, timestamp=datetime.now(timezone.utc).isoformat())
+        # Store in legacy ChromaDB for backwards-compatibility
+        coll = _get_memory_collection(req.type)
+        if coll is not None:
+            mem_id = f"{req.type[:3]}-{int(time.time() * 1000)}"
+            metadata = {
+                "summary": (req.summary or content[:200]),
+                "tags": ",".join(req.tags or []),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            coll.upsert(documents=[content], ids=[mem_id], metadatas=[metadata])
+            return {"status": "ok", "id": mem_id, "type": req.type}
+        return {"status": "ok", "id": "hs-mem", "type": req.type}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to store memory: {e}")
 
 
 @app.post("/api/memory/recall")
 async def recall_memory(req: MemoryRecallRequest):
-    """Semantic search across memory types."""
-    if req.type:
-        # Search specific type
-        coll = _get_memory_collection(req.type)
-        if coll is None or coll.count() == 0:
-            return {"results": []}
-        try:
-            results = coll.query(
+    """Hindsight memory recall across semantic, graph, keyword and temporal layers."""
+    try:
+        results = await _hindsight.recall(bank_id=req.type or "all", query=req.query)
+        if not results:
+            # Fallback to legacy
+            if not req.type:
+                results = await recall_relevant_memories(req.query, req.limit or 5)
+                return {"results": results}
+            coll = _get_memory_collection(req.type)
+            if coll is None or coll.count() == 0:
+                return {"results": []}
+            legacy_results = coll.query(
                 query_texts=[req.query],
                 n_results=min(req.limit or 5, coll.count()),
             )
             formatted = []
-            ids = results.get("ids", [[]])[0]
-            docs = results.get("documents", [[]])[0]
-            metas = results.get("metadatas", [[]])[0]
-            distances = results.get("distances", [[]])[0]
+            ids = legacy_results.get("ids", [[]])[0]
+            docs = legacy_results.get("documents", [[]])[0]
+            metas = legacy_results.get("metadatas", [[]])[0]
+            distances = legacy_results.get("distances", [[]])[0]
             for i, doc_id in enumerate(ids):
                 similarity = round(1 - (distances[i] / 2), 4) if distances else 0.0
                 formatted.append({
@@ -3862,12 +4339,18 @@ async def recall_memory(req: MemoryRecallRequest):
                     "timestamp": (metas[i] or {}).get("timestamp", ""),
                 })
             return {"results": formatted}
-        except Exception as e:
-            return {"results": [], "error": str(e)}
-    else:
-        # Search all types
-        results = await recall_relevant_memories(req.query, req.limit or 5)
         return {"results": results}
+    except Exception as e:
+        return {"results": [], "error": str(e)}
+
+@app.post("/api/memory/reflect")
+async def reflect_memory(req: SearchRequest):
+    """Deep reflection over past memories."""
+    try:
+        analysis = await _hindsight.reflect(bank_id="all", query=req.query)
+        return {"reflection": analysis}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/memory/list")
@@ -4081,6 +4564,46 @@ async def telemetry():
             "status": st["status"],
         })
 
+    # CPU / RAM via psutil
+    try:
+        cpu_pct = psutil.cpu_percent(interval=None)
+        ram = psutil.virtual_memory()
+        ram_used_mb = round(ram.used / 1024 / 1024)
+        ram_total_mb = round(ram.total / 1024 / 1024)
+        ram_pct = round(ram.percent, 1)
+    except Exception:
+        cpu_pct, ram_used_mb, ram_total_mb, ram_pct = 0, 0, 0, 0
+
+    # Per-model throughput from Ollama /api/ps
+    model_throughput: list[dict] = []
+    try:
+        client = await get_ollama_client()
+        resp = await client.get(f"{OLLAMA_URL}/api/ps", timeout=3)
+        if resp.status_code == 200:
+            ps_data = resp.json()
+            for m in ps_data.get("models", []):
+                model_throughput.append({
+                    "name": m.get("name", ""),
+                    "size_mb": round(m.get("size", 0) / 1024 / 1024),
+                    "vram_mb": round(m.get("size_vram", 0) / 1024 / 1024),
+                    "expires_at": m.get("expires_at", ""),
+                })
+    except Exception:
+        pass
+
+    # HindsightMemory stats
+    memory_stats: dict = {"entries": 0, "last_compaction": "never"}
+    try:
+        hdb = _hindsight._chroma_client  # type: ignore[attr-defined]
+        col = _hindsight._collection  # type: ignore[attr-defined]
+        if col is not None:
+            memory_stats["entries"] = col.count()
+        compacted = getattr(_reme, "_last_compaction_at", None)
+        if compacted:
+            memory_stats["last_compaction"] = compacted
+    except Exception:
+        pass
+
     return {
         "uptime": round(time.time() - START_TIME),
         "vram": {
@@ -4088,10 +4611,14 @@ async def telemetry():
             "total_mb": gpu["vram_total_mb"] if gpu else 0,
             "percent": round((gpu["vram_used_mb"] / gpu["vram_total_mb"]) * 100, 1) if gpu and gpu["vram_total_mb"] > 0 else 0,
         },
+        "cpu": {"percent": cpu_pct},
+        "ram": {"used_mb": ram_used_mb, "total_mb": ram_total_mb, "percent": ram_pct},
         "cache": cache,
         "agents": agents,
         "pipeline_queue": sum(1 for a in _agent_states.values() if a["status"] == "active"),
         "models_loaded": await get_loaded_models(),
+        "model_throughput": model_throughput,
+        "memory_stats": memory_stats,
     }
 
 
@@ -4182,10 +4709,14 @@ class RunCodeRequest(BaseModel):
 
 @app.post("/api/run-code")
 async def api_run_code(req: RunCodeRequest):
-    """Execute Python code in a sandboxed subprocess.
+    """Execute restricted Python in an isolated subprocess.
 
-    Returns stdout, stderr, success flag. Timeout max 30s.
-    Allowed imports: math, json, re, random, datetime (no file system or network).
+    Returns stdout, stderr, success flag. Timeout max 30s. Imports are refused;
+    the namespace pre-loads math, json, re, random and datetime. Underscore
+    attribute access and the dangerous builtins are blocked, so file and network
+    access are not reachable through the normal routes — see code_sandbox for the
+    honest boundary. The process + timeout, not the language restriction, is the
+    real isolation.
     """
     t = max(1, min(30, req.timeout or 8))
     result = await run_code(req.code, timeout=t)
@@ -4302,6 +4833,202 @@ async def manage_model(req: ModelManageRequest):
     else:
         raise HTTPException(status_code=400, detail=f"Invalid action: {req.action}")
 
+
+class PullModelRequest(BaseModel):
+    model: str
+
+
+@app.post("/api/models/pull")
+async def pull_model(req: PullModelRequest):
+    """Stream Ollama pull progress as SSE."""
+    async def pull_stream():
+        client = await get_ollama_client()
+        try:
+            async with client.stream(
+                "POST",
+                f"{OLLAMA_URL}/api/pull",
+                json={"name": req.model, "stream": True},
+                timeout=600.0,  # 10 min for large models
+            ) as resp:
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                        # Ollama pull sends: {"status": "...", "completed": N, "total": N}
+                        sse = {
+                            "status": chunk.get("status", ""),
+                            "completed": chunk.get("completed"),
+                            "total": chunk.get("total"),
+                            "done": chunk.get("status") == "success",
+                        }
+                        yield f"data: {json.dumps(sse)}\n\n"
+                        if chunk.get("status") == "success":
+                            break
+                    except Exception:
+                        continue
+        except httpx.ConnectError:
+            yield 'data: {"error": "Cannot connect to Ollama", "error_type": "connection"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        pull_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+class ModelfileRequest(BaseModel):
+    name: str
+    modelfile: str
+
+
+@app.post("/api/models/create")
+async def create_model(req: ModelfileRequest):
+    """Stream Ollama model creation from a Modelfile as SSE."""
+    async def create_stream():
+        client = await get_ollama_client()
+        try:
+            async with client.stream(
+                "POST",
+                f"{OLLAMA_URL}/api/create",
+                json={"name": req.name, "modelfile": req.modelfile, "stream": True},
+                timeout=300.0,
+            ) as resp:
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                        sse = {
+                            "status": chunk.get("status", ""),
+                            "done": chunk.get("status") == "success",
+                        }
+                        yield f"data: {json.dumps(sse)}\n\n"
+                        if chunk.get("status") == "success":
+                            break
+                    except Exception:
+                        continue
+        except httpx.ConnectError:
+            yield 'data: {"error": "Cannot connect to Ollama", "error_type": "connection"}\n\n'
+        except Exception as e:
+            _logger.error(f"Model create error: {e}")
+            yield f"data: {json.dumps({'error': f'Create failed: {str(e)}'})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        create_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Model Update Advisor — button-triggered, advisory only (no download/deploy/delete)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CheckUpdatesRequest(BaseModel):
+    model: str | None = None
+
+@app.post("/api/models/check-updates")
+async def check_model_updates(req: CheckUpdatesRequest):
+    """
+    Checks real sources (Hugging Face, the Ollama library, The Rundown AI) and reports
+    whether the given/selected model is outdated, plus newer alternatives.
+    Purely advisory: it never downloads, deploys, or deletes anything.
+    """
+    current = (req.model or "").strip()
+    if not current:
+        # Fall back to the configured default if the client didn't send one.
+        current = AGENT_MODEL_MAP.get("default", "llama3.2:3b")
+
+    client = await get_external_client()
+    report = await check_model_outdated(current, client, _logger)
+    return report
+
+
+@app.get("/api/models/recommend")
+async def recommend_models_endpoint():
+    """Hardware-aware Cookbook recommendations — ranks real Ollama models by fit.
+
+    Advisory only: returns `ollama pull` targets, never downloads anything.
+    """
+    gpu = get_gpu_info()
+    vram_gb = (gpu["vram_total_mb"] / 1024.0) if gpu and gpu.get("vram_total_mb") else 0.0
+    ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+    client = await get_external_client()
+    return await model_advisor.recommend_models(vram_gb, ram_gb, client, _logger)
+
+
+@app.get("/api/models/installed")
+async def models_installed():
+    """The set of models Ollama actually has locally (for Cookbook install badges).
+
+    Reuses the existing SSE pull endpoint (/api/models/pull, {model}) for downloads —
+    this just reports what's already present so the UI can show installed/available.
+    """
+    names = await get_loaded_models()
+    ollama_up = bool(names)
+    if not ollama_up:
+        try:
+            c = await get_ollama_client()
+            r = await c.get(f"{OLLAMA_URL}/api/tags", timeout=4.0)
+            ollama_up = r.status_code == 200
+        except Exception:
+            ollama_up = False
+    return {"installed": names, "ollama": ollama_up}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Odysseus Update Checker — advisory only (surfaces upstream changes, never applies)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OdysseusAckRequest(BaseModel):
+    sha: str
+
+@app.get("/api/odysseus/updates/check")
+async def odysseus_updates_check(
+    owner: str = odysseus_updates.DEFAULT_OWNER,
+    repo: str = odysseus_updates.DEFAULT_REPO,
+    branch: str = odysseus_updates.DEFAULT_BRANCH,
+):
+    """Checks the upstream Odysseus repo for commits newer than the acknowledged baseline."""
+    client = await get_external_client()
+    try:
+        token = vault.resolve_env("GITHUB_TOKEN") or vault.resolve_env("GH_TOKEN")
+    except vault.VaultError:
+        # The token is a vault reference and the vault is locked. Unauthenticated
+        # requests still work here, just at a lower GitHub rate limit.
+        token = None
+    return await odysseus_updates.check_updates(
+        get_writable_path(), client, owner, repo, branch, token, _logger
+    )
+
+@app.post("/api/odysseus/updates/ack")
+async def odysseus_updates_ack(req: OdysseusAckRequest):
+    """Marks a commit SHA as reviewed so future checks report only newer commits."""
+    return odysseus_updates.acknowledge(get_writable_path(), req.sha)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Image generation — proxy to a configured OpenAI-compatible images endpoint
+# ─────────────────────────────────────────────────────────────────────────────
+
+class ImageGenRequest(BaseModel):
+    prompt: str
+    size: str = "1024x1024"
+    n: int = 1
+
+@app.get("/api/images/status")
+def images_status():
+    """Reports whether an image-generation endpoint is configured (no key is exposed)."""
+    return image_gen.status()
+
+@app.post("/api/images/generate")
+async def images_generate(req: ImageGenRequest):
+    """Generates image(s) via the configured OpenAI-compatible endpoint. Never fakes output."""
+    client = await get_external_client()
+    return await image_gen.generate(req.prompt, req.size, req.n, client, _logger)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Enhanced /api/models with VRAM estimation (Item 8)
@@ -4599,6 +5326,36 @@ def get_available_tools() -> list[dict]:
             "endpoint": "/api/deep-research",
             "params": ["query", "depth"],
         },
+        {
+            "name": "memory_reflect",
+            "description": "Reflect on all stored memories to surface patterns and insights",
+            "endpoint": "/api/memory/reflect",
+            "params": ["query"],
+        },
+        {
+            "name": "url_fetch",
+            "description": "Fetch and extract readable text from any URL",
+            "endpoint": "/api/tools/fetch",
+            "params": ["url"],
+        },
+        {
+            "name": "wikipedia_search",
+            "description": "Search Wikipedia and return article summaries",
+            "endpoint": "/api/tools/wikipedia",
+            "params": ["query"],
+        },
+        {
+            "name": "shell_exec",
+            "description": "Execute whitelisted shell commands",
+            "endpoint": "/api/tools/shell",
+            "params": ["command"],
+        },
+        {
+            "name": "git_query",
+            "description": "Run read-only git commands against a repository",
+            "endpoint": "/api/tools/git",
+            "params": ["repo_path", "command"],
+        },
     ]
 
 
@@ -4711,6 +5468,353 @@ async def skills_compiled():
 async def tools_discover():
     """Return all available backend tools for autonomous agent discovery."""
     return {"tools": get_available_tools()}
+
+
+# ── v3.8: URL Fetch tool ──────────────────────────────────────────────────────
+
+class FetchUrlRequest(BaseModel):
+    url: str
+    max_chars: Optional[int] = 8000
+
+@app.post("/api/tools/fetch")
+async def fetch_url_tool(request: FetchUrlRequest):
+    """Fetch a URL and return extracted readable text."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(request.url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Only http/https URLs allowed")
+    try:
+        text = await scrape_page(request.url)
+        if not text:
+            raise HTTPException(status_code=422, detail="Could not extract text from URL")
+        return {
+            "url": request.url,
+            "text": text[: request.max_chars],
+            "chars": len(text),
+            "truncated": len(text) > (request.max_chars or 8000),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── MCP server reachability probe ─────────────────────────────────────────────
+# Honest, read-only: checks whether a configured HTTP/SSE MCP endpoint responds.
+# Does NOT launch stdio servers or execute anything — that stays out of scope.
+
+class MCPProbeRequest(BaseModel):
+    url: str
+
+
+# ── YouTube tools ─────────────────────────────────────────────────────────────
+# Real metadata (oEmbed) + captions (page caption tracks). No API key, no extra
+# deps. Honest: a video without captions returns transcript.available = false.
+
+class YouTubeRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/youtube")
+async def youtube_fetch(request: YouTubeRequest):
+    """Fetch a YouTube video's metadata and transcript."""
+    client = await get_external_client()
+    return await youtube_tools.fetch_video(client, request.url)
+
+
+# ── Vault ─────────────────────────────────────────────────────────────────────
+# Metadata only. There is deliberately NO endpoint that returns a secret value:
+# values are substituted server-side at point of use via vault.resolve(), so a
+# request that reaches this API cannot extract one. Keep it that way — adding a
+# reveal endpoint would undo the design, not extend it.
+#
+# Passphrases arrive in POST bodies, never in a URL or query string, so they
+# stay out of access logs, browser history and Referer headers.
+
+class VaultPassphraseRequest(BaseModel):
+    passphrase: str
+
+
+class VaultSecretRequest(BaseModel):
+    name: str
+    value: str
+
+
+def _vault_error(e: Exception) -> HTTPException:
+    """vault.VaultError messages are written to be user-facing and leak nothing."""
+    if isinstance(e, vault.VaultLocked):
+        return HTTPException(status_code=423, detail=str(e))   # 423 Locked
+    return HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/vault/status")
+async def vault_status():
+    """Whether a vault exists, whether it is unlocked, and the names in it."""
+    return vault.status(get_writable_path())
+
+
+@app.post("/api/vault/create")
+async def vault_create(request: VaultPassphraseRequest):
+    try:
+        vault.create(get_writable_path(), request.passphrase)
+    except vault.VaultError as e:
+        raise _vault_error(e)
+    return vault.status(get_writable_path())
+
+
+@app.post("/api/vault/unlock")
+async def vault_unlock(request: VaultPassphraseRequest):
+    try:
+        vault.unlock(get_writable_path(), request.passphrase)
+    except vault.VaultError as e:
+        raise _vault_error(e)
+    return vault.status(get_writable_path())
+
+
+@app.post("/api/vault/lock")
+async def vault_lock():
+    vault.lock()
+    return vault.status(get_writable_path())
+
+
+@app.put("/api/vault/secret")
+async def vault_set_secret(request: VaultSecretRequest):
+    """Store or replace a secret. Returns metadata only — never the value."""
+    try:
+        vault.set_secret(get_writable_path(), request.name, request.value)
+    except vault.VaultError as e:
+        raise _vault_error(e)
+    return vault.status(get_writable_path())
+
+
+@app.delete("/api/vault/secret/{name}")
+async def vault_delete_secret(name: str):
+    try:
+        removed = vault.delete_secret(get_writable_path(), name)
+    except vault.VaultError as e:
+        raise _vault_error(e)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"No secret named {name!r}.")
+    return vault.status(get_writable_path())
+
+
+@app.post("/api/mcp/probe")
+async def mcp_probe(request: MCPProbeRequest):
+    """Server-side reachability check for an HTTP/SSE MCP endpoint (no CORS limits)."""
+    import urllib.parse
+    parsed = urllib.parse.urlparse(request.url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Only http/https URLs can be probed")
+    client = await get_external_client()
+    started = time.time()
+    try:
+        # A GET is the most compatible; many MCP/SSE endpoints reject HEAD.
+        resp = await client.get(request.url, timeout=httpx.Timeout(6.0, connect=4.0))
+        return {
+            "reachable": True,
+            "status": resp.status_code,
+            "latency_ms": round((time.time() - started) * 1000),
+        }
+    except httpx.TimeoutException:
+        return {"reachable": False, "error": "timeout"}
+    except Exception as e:
+        return {"reachable": False, "error": type(e).__name__}
+
+
+# ── Server-side document drafts ───────────────────────────────────────────────
+# Drafts persisted under <writable>/data/documents.json so they survive a browser
+# clear. The frontend falls back to local drafts (and says so) when unreachable.
+#
+# NOTE: deliberately namespaced /api/drafts — /api/documents already belongs to
+# the RAG ingestion API (POST ingest, GET /list, DELETE /{id}). Reusing that path
+# would have shadowed those routes.
+
+class DraftIn(BaseModel):
+    id: Optional[str] = None
+    title: Optional[str] = ""
+    content: Optional[str] = ""
+    updatedAt: Optional[int] = None
+
+
+@app.get("/api/drafts")
+def drafts_list():
+    """All server-side drafts, newest first."""
+    docs = documents_store.load_all(get_writable_path())
+    docs.sort(key=lambda d: d.get("updatedAt", 0), reverse=True)
+    return {"documents": docs}
+
+
+@app.put("/api/drafts")
+def drafts_upsert(doc: DraftIn):
+    """Create or update a draft."""
+    saved = documents_store.upsert(get_writable_path(), doc.model_dump())
+    return {"document": saved}
+
+
+@app.delete("/api/drafts/{doc_id}")
+def drafts_delete(doc_id: str):
+    """Delete a draft. 404 when it doesn't exist."""
+    if not documents_store.delete(get_writable_path(), doc_id):
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"deleted": doc_id}
+
+
+# ── v3.8: Wikipedia search tool ───────────────────────────────────────────────
+
+class WikipediaRequest(BaseModel):
+    query: str
+    sentences: Optional[int] = 5
+
+@app.post("/api/tools/wikipedia")
+async def wikipedia_tool(request: WikipediaRequest):
+    """Search Wikipedia and return a summary of the top result."""
+    try:
+        search_url = "https://en.wikipedia.org/w/api.php"
+        params = {
+            "action": "query",
+            "list": "search",
+            "srsearch": request.query,
+            "format": "json",
+            "srlimit": 3,
+        }
+        client = await get_ollama_client()  # reuse httpx client pattern
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=10) as wc:
+            search_resp = await wc.get(search_url, params=params)
+            search_data = search_resp.json()
+            results = search_data.get("query", {}).get("search", [])
+            if not results:
+                return {"results": [], "query": request.query}
+            # Fetch extract for top 3 results
+            page_titles = [r["title"] for r in results[:3]]
+            extract_params = {
+                "action": "query",
+                "prop": "extracts",
+                "exintro": True,
+                "explaintext": True,
+                "exsentences": request.sentences,
+                "titles": "|".join(page_titles),
+                "format": "json",
+            }
+            extract_resp = await wc.get(search_url, params=extract_params)
+            extract_data = extract_resp.json()
+            pages = extract_data.get("query", {}).get("pages", {})
+            wiki_results = []
+            for r in results[:3]:
+                title = r["title"]
+                page = next((p for p in pages.values() if p.get("title") == title), None)
+                wiki_results.append({
+                    "title": title,
+                    "snippet": r.get("snippet", "").replace("<span class=\"searchmatch\">", "").replace("</span>", ""),
+                    "extract": (page or {}).get("extract", ""),
+                    "url": f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                })
+        return {"results": wiki_results, "query": request.query}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── v3.8: Scan Claude Code skills directory ───────────────────────────────────
+
+@app.get("/api/skills/scan-claude")
+async def scan_claude_skills():
+    """Scan the Claude Code skills directory and return open-source skill files."""
+    import json as _json
+    from fastapi.responses import Response as _Response
+
+    base = Path.home() / ".claude" / "skills"
+
+    if not base.exists():
+        payload = {"skills": [], "directory": str(base), "exists": False}
+        return _Response(content=_json.dumps(payload), media_type="application/json")
+
+    skills = []
+    try:
+        entries = sorted(base.iterdir(), key=lambda p: p.name.lower())
+    except Exception as e:
+        payload = {"skills": [], "directory": str(base), "exists": True, "error": str(e)}
+        return _Response(content=_json.dumps(payload), media_type="application/json")
+
+    for entry in entries:
+        try:
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir():
+                for candidate in ("SKILL.md", "skill.md", "README.md"):
+                    skill_file = entry / candidate
+                    if skill_file.exists():
+                        content = skill_file.read_text(encoding="utf-8", errors="replace")
+                        skills.append({
+                            "name": entry.name,
+                            "content": content,
+                            "filename": f"{entry.name}/{candidate}",
+                            "type": "folder",
+                        })
+                        break
+            elif entry.is_file() and entry.suffix == ".md" and entry.name not in ("MEMORY.md",):
+                content = entry.read_text(encoding="utf-8", errors="replace")
+                skills.append({
+                    "name": entry.stem,
+                    "content": content,
+                    "filename": entry.name,
+                    "type": "file",
+                })
+        except Exception:
+            continue
+
+    payload = {"skills": skills, "directory": str(base), "exists": True, "count": len(skills)}
+    try:
+        body = _json.dumps(payload, ensure_ascii=False)
+    except Exception:
+        # Fallback: ascii-safe encoding
+        body = _json.dumps(payload, ensure_ascii=True)
+    return _Response(content=body, media_type="application/json")
+
+
+# ── v3.8: Session analytics endpoint ─────────────────────────────────────────
+
+@app.get("/api/analytics/session")
+async def session_analytics():
+    """Per-agent breakdown + memory/CoT/voice stats for the current session."""
+    agent_stats = []
+    for name in PIPELINE:
+        st = _agent_states[name]
+        agent_stats.append({
+            "name": name,
+            "requests": st["requestCount"],
+            "tokens": st["tokensProcessed"],
+            "avg_ms": round(st["totalResponseMs"] / max(st["requestCount"], 1)),
+            "status": st["status"],
+        })
+
+    # Memory system stats
+    memory_entries = 0
+    try:
+        col = _hindsight._collection  # type: ignore[attr-defined]
+        if col is not None:
+            memory_entries = col.count()
+    except Exception:
+        pass
+
+    # Count CoT invocations from thinking_loop calls (tracked via agent state if available)
+    total_requests = sum(a["requestCount"] for a in _agent_states.values())
+
+    # Voice session count from voice_stream calls
+    voice_sessions = getattr(voice_stream, "_session_count", 0)
+
+    return {
+        "agents": agent_stats,
+        "memory": {
+            "entries": memory_entries,
+            "graph_nodes": _alfred.node_count() if hasattr(_alfred, "node_count") else 0,
+        },
+        "session": {
+            "total_requests": total_requests,
+            "voice_sessions": voice_sessions,
+            "uptime_s": round(time.time() - START_TIME),
+        },
+    }
+
 
 
 # ── v3.5: AI Project Mode endpoints (Feature 12) ─────────────────────────────
@@ -4861,35 +5965,156 @@ async def voice_transcribe(request: "VoiceTranscribeRequest"):
         raise HTTPException(500, f"Transcription failed: {e}")
 
 
+_FISH_SPEECH_URL = "http://localhost:8080"  # fish-speech server default port
+
+
+async def _fish_speech_tts(text: str, voice: str = "default", format: str = "wav") -> bytes | None:
+    """Call fish-speech TTS server and return audio bytes. Returns None if unavailable."""
+    try:
+        client = await get_external_client()
+        resp = await client.post(
+            f"{_FISH_SPEECH_URL}/v1/tts",
+            json={
+                "text": text,
+                "chunk_length": 200,
+                "format": format,
+                "references": [],
+                "seed": None,
+                "use_memory_cache": "never",
+            },
+            timeout=httpx.Timeout(30.0, connect=2.0),
+        )
+        if resp.status_code == 200 and resp.content:
+            return resp.content
+    except Exception:
+        pass
+    return None
+
+
 @app.post("/api/voice/speak")
 async def voice_speak(request: "VoiceSpeakRequest"):
-    """Synthesize text to speech via pyttsx3 (non-blocking daemon thread)."""
-    if not _PYTTSX3_AVAILABLE:
-        raise HTTPException(503, "pyttsx3 not installed. Run: pip install pyttsx3")
+    """Synthesize text to speech.
 
-    import threading
+    Priority order:
+      1. Fish Speech (localhost:8080) — SOTA quality, emotion-aware, voice cloning
+      2. pyttsx3 fallback — basic offline TTS if fish-speech server is not running
 
-    def _speak_thread(text: str, rate: int, volume: float):
-        try:
-            engine = _pyttsx3.init()
-            voices = engine.getProperty("voices")
-            # Prefer female voice (index 1) if available
-            if voices and len(voices) > 1:
-                engine.setProperty("voice", voices[1].id)
-            engine.setProperty("rate", rate)
-            engine.setProperty("volume", volume)
-            engine.say(text)
-            engine.runAndWait()
-        except Exception as e:
-            _logger.warning(f"TTS speak failed: {e}")
+    Returns audio_b64 (WAV) when fish-speech is used so the frontend can play it.
+    Falls back to server-side playback via pyttsx3 when fish-speech is unavailable.
+    """
+    import base64
 
-    t = threading.Thread(
-        target=_speak_thread,
-        args=(request.text, request.rate, request.volume),
-        daemon=True,
+    # ── 1. Try fish-speech ────────────────────────────────────────────────────
+    audio_bytes = await _fish_speech_tts(request.text)
+    if audio_bytes:
+        audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        return {
+            "status": "speaking",
+            "source": "fish-speech",
+            "audio_b64": audio_b64,
+            "format": "wav",
+            "text": request.text[:100],
+        }
+
+    # ── 2. Fallback: pyttsx3 (local playback, no audio returned) ─────────────
+    if _PYTTSX3_AVAILABLE:
+        import threading
+
+        def _speak_thread(text: str, rate: int, volume: float):
+            try:
+                engine = _pyttsx3.init()
+                voices = engine.getProperty("voices")
+                if voices and len(voices) > 1:
+                    engine.setProperty("voice", voices[1].id)
+                engine.setProperty("rate", rate)
+                engine.setProperty("volume", volume)
+                engine.say(text)
+                engine.runAndWait()
+            except Exception as e:
+                _logger.warning(f"TTS fallback failed: {e}")
+
+        threading.Thread(
+            target=_speak_thread,
+            args=(request.text, request.rate, request.volume),
+            daemon=True,
+        ).start()
+        return {"status": "speaking", "source": "pyttsx3", "text": request.text[:100]}
+
+    raise HTTPException(
+        503,
+        "No TTS available. Start fish-speech server (localhost:8080) or install pyttsx3.",
     )
-    t.start()
-    return {"status": "speaking", "text": request.text[:100]}
+
+@app.websocket("/api/voice/stream")
+async def voice_stream(websocket: WebSocket):
+    """v3.8: PersonaPlex continuous voice orchestration endpoint"""
+    await websocket.accept()
+    if not _WHISPER_AVAILABLE:
+        await websocket.close(code=1011, reason="faster-whisper missing")
+        return
+    model = await _get_whisper()
+    # It is okay if model is None if the client sends pre-transcribed text 
+
+    import base64
+    import tempfile
+    loop = asyncio.get_event_loop()
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            text = ""
+            if "text" in data:
+                text = data["text"]
+            elif "audio_b64" in data and model is not None:
+                # 1. Transcribe
+                audio_bytes = base64.b64decode(data["audio_b64"])
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as f:
+                    f.write(audio_bytes)
+                    tmp_path = f.name
+                
+                def _transcribe():
+                    segs, info = model.transcribe(tmp_path, beam_size=1, language="en")
+                    return "".join(s.text for s in segs).strip()
+                
+                text = await loop.run_in_executor(None, _transcribe)
+                try: os.unlink(tmp_path)
+                except Exception: pass
+
+            if not text or len(text.strip()) < 2:
+                continue
+
+            await websocket.send_json({"type": "transcription", "text": text})
+
+            # 2. Feed to Agent Pipeline logic
+            messages = [{"role": "system", "content": "You are ECHO, interacting via a real-time voice channel. Keep responses extremely concise and conversational."}, {"role": "user", "content": text}]
+            ai_response = await ollama_chat_text(messages, model=AGENT_MODEL_MAP.get("Supervisor", "llama3.2:3b"))
+            
+            await websocket.send_json({"type": "llm_response", "text": ai_response})
+
+            # 3. Text to Speech — prefer fish-speech, fall back to pyttsx3
+            import base64 as _b64
+            audio_bytes = await _fish_speech_tts(ai_response)
+            if audio_bytes:
+                await websocket.send_json({
+                    "type": "tts_audio",
+                    "audio_b64": _b64.b64encode(audio_bytes).decode("utf-8"),
+                    "format": "wav",
+                    "source": "fish-speech",
+                })
+            elif _PYTTSX3_AVAILABLE:
+                import threading
+                def _speak():
+                    engine = _pyttsx3.init()
+                    engine.say(ai_response)
+                    engine.runAndWait()
+                threading.Thread(target=_speak, daemon=True).start()
+
+    except WebSocketDisconnect:
+        _logger.info("PersonaPlex voice stream disconnected")
+    except Exception as e:
+        _logger.error(f"Voice stream error: {e}")
+        try: await websocket.close(code=1011)
+        except Exception: pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -4945,11 +6170,15 @@ async def vision_analyze(req: VisionRequest):
 # Tool Execution Agent — shell, python (sandbox), git
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Read-only inspection commands only. Interpreters (python, node), package
+# managers (pip, npm) and network fetchers (curl, wget) were removed: each is
+# arbitrary code execution or SSRF on its own — `python -c "..."` needs no shell
+# metacharacters, so the token blocklist below never sees it. `find` is out too;
+# its -exec/-delete run commands and delete files. `git` has its own read-only
+# endpoint (/api/tools/git). This list is now things that read and print.
 SAFE_SHELL_COMMANDS = {
     "ls", "dir", "pwd", "echo", "cat", "type", "head", "tail",
-    "grep", "find", "wc", "date", "hostname", "whoami",
-    "pip", "pip3", "python", "python3", "node", "npm",
-    "git", "curl", "wget",
+    "grep", "wc", "date", "hostname", "whoami",
 }
 
 class ShellRequest(BaseModel):
@@ -4959,6 +6188,78 @@ class ShellRequest(BaseModel):
 class GitRequest(BaseModel):
     repo_path: str = "."
     command: str  # e.g. "log --oneline -10" or "status"
+
+
+_tool_path_cache: Optional[str] = None
+_tool_path_resolved = False
+
+
+def _tool_path() -> str:
+    """PATH to look tools up in: ours, plus Git for Windows' Unix binaries.
+
+    SAFE_SHELL_COMMANDS is Unix-shaped, but stock Windows ships almost none of
+    it, and echo/dir/date/type are cmd.exe builtins with no .exe anywhere, so
+    exec can never find them however PATH is set. Git for Windows bundles real
+    binaries for nearly all of them in usr\\bin, and ECHO already depends on git.
+
+    Appended, not prepended: where Windows does provide a tool (whoami,
+    hostname) it keeps winning, so this only ever fills in gaps.
+    """
+    global _tool_path_cache, _tool_path_resolved
+    if _tool_path_resolved:
+        return _tool_path_cache
+    _tool_path_resolved = True
+    _tool_path_cache = os.environ.get("PATH", "")
+    git = shutil.which("git")
+    if git:
+        # git.exe sits in <root>\cmd, <root>\bin or <root>\mingw64\bin.
+        for root in list(Path(git).resolve().parents)[:3]:
+            usr_bin = root / "usr" / "bin"
+            if usr_bin.is_dir():
+                _tool_path_cache += os.pathsep + str(usr_bin)
+                break
+    return _tool_path_cache
+
+
+async def _run_argv(argv: list[str], timeout: int) -> dict:
+    """Run argv with no shell in between, off the event loop.
+
+    A worker thread running blocking subprocess.run, deliberately, rather than
+    asyncio.create_subprocess_exec: asyncio can only spawn processes on a
+    ProactorEventLoop on Windows, and `uvicorn --reload` puts the app on a
+    SelectorEventLoop, where every spawn raises a bare NotImplementedError.
+    A thread spawns fine on any loop, on any platform, from any thread.
+
+    subprocess.run's own timeout kills the child; asyncio.wait_for around
+    communicate() used to leave it running.
+    """
+    # Resolved here rather than left to the OS because on Windows CreateProcess
+    # looks the program up in the *parent's* PATH, so handing subprocess an
+    # env with our PATH in it would not affect which binary is found.
+    exe = shutil.which(argv[0], path=_tool_path())
+    if exe is None:
+        raise FileNotFoundError(argv[0])
+
+    def _call():
+        # stdin=DEVNULL: an HTTP caller has no stdin to give, and inheriting the
+        # server's makes argument-less `cat`/`grep`/`wc` block for the whole
+        # timeout instead of returning at once.
+        return subprocess.run([exe, *argv[1:]], capture_output=True,
+                              stdin=subprocess.DEVNULL, timeout=timeout, check=False)
+
+    proc = await asyncio.to_thread(_call)
+    return {
+        "stdout": proc.stdout.decode(errors="replace"),
+        "stderr": proc.stderr.decode(errors="replace"),
+        "returncode": proc.returncode,
+    }
+
+
+def _exec_failure(e: Exception) -> HTTPException:
+    """500 that names the exception type: str(NotImplementedError()) is "",
+    which is how this endpoint spent a long time reporting {"detail": ""}."""
+    return HTTPException(500, f"{type(e).__name__}: {e}".rstrip(": "))
+
 
 @app.post("/api/tools/shell")
 async def tools_shell(request: ShellRequest):
@@ -4972,11 +6273,15 @@ async def tools_shell(request: ShellRequest):
     if not parts:
         raise HTTPException(400, "Empty command")
 
-    base_cmd = parts[0].lower().rstrip(".exe")
+    # removesuffix, not rstrip: rstrip takes a character *set*, so it turned
+    # date -> dat and hostname -> hostnam and 403'd both.
+    base_cmd = parts[0].lower().removesuffix(".exe")
     if base_cmd not in SAFE_SHELL_COMMANDS:
         raise HTTPException(403, f"Command '{parts[0]}' is not in the allowed list: {sorted(SAFE_SHELL_COMMANDS)}")
 
-    # Block dangerous flags
+    # Defence in depth: with exec below no shell interprets these, so they would
+    # be literal args, but rejecting them keeps intent obvious and the surface
+    # small.
     dangerous = [";", "&&", "||", "|", ">", ">>", "<", "`", "$(",
                  "rm", "del", "format", "mkfs", "dd", "shutdown", "reboot"]
     joined = request.command.lower()
@@ -4985,23 +6290,15 @@ async def tools_shell(request: ShellRequest):
             raise HTTPException(403, f"Command contains disallowed token: '{d}'")
 
     try:
-        proc = await asyncio.create_subprocess_shell(
-            request.command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=request.timeout
-        )
-        return {
-            "stdout": stdout.decode(errors="replace"),
-            "stderr": stderr.decode(errors="replace"),
-            "returncode": proc.returncode,
-        }
-    except asyncio.TimeoutError:
+        # exec, not shell: the parsed argv is passed directly to the OS with no
+        # shell in between, so metacharacters can't chain commands or redirect.
+        return await _run_argv(parts, request.timeout)
+    except subprocess.TimeoutExpired:
         raise HTTPException(408, "Command timed out")
+    except FileNotFoundError:
+        raise HTTPException(404, f"'{parts[0]}' is allowed but not installed on PATH")
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise _exec_failure(e)
 
 
 @app.post("/api/tools/git")
@@ -5012,24 +6309,16 @@ async def tools_git(request: GitRequest):
     if not parts or parts[0] not in ALLOWED_GIT:
         raise HTTPException(403, f"Git sub-command must be one of: {sorted(ALLOWED_GIT)}")
 
-    import shlex
-    cmd = f'git -C "{request.repo_path}" {request.command}'
+    # argv, not an interpolated shell string: repo_path came from the caller,
+    # and quoting it into a shell command was one `"` away from injection.
     try:
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
-        return {
-            "stdout": stdout.decode(errors="replace"),
-            "stderr": stderr.decode(errors="replace"),
-            "returncode": proc.returncode,
-        }
-    except asyncio.TimeoutError:
+        return await _run_argv(["git", "-C", request.repo_path, *parts], 15)
+    except subprocess.TimeoutExpired:
         raise HTTPException(408, "Git command timed out")
+    except FileNotFoundError:
+        raise HTTPException(404, "git is not installed on PATH")
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise _exec_failure(e)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -5076,7 +6365,7 @@ _BUILTIN_PLUGINS: list[dict] = [
     {
         "id": "voice_io",
         "name": "Voice I/O",
-        "description": "Whisper speech-to-text + pyttsx3 text-to-speech",
+        "description": "Whisper speech-to-text + Fish Speech TTS (emotion-aware, voice cloning) with pyttsx3 fallback",
         "category": "io",
         "icon": "🎙️",
         "enabled": True,
@@ -5124,6 +6413,88 @@ _BUILTIN_PLUGINS: list[dict] = [
         "description": "Render flowcharts, sequence diagrams, Gantt charts from Markdown",
         "category": "viz",
         "icon": "📊",
+        "enabled": True,
+        "builtin": True,
+    },
+    # ── v3.8: New system plugins ───────────────────────────────────────────
+    {
+        "id": "hindsight_memory",
+        "name": "Hindsight Memory",
+        "description": "4-strategy long-term memory retrieval (semantic/BM25/entity/temporal) with RRF fusion and ChromaDB backend",
+        "category": "memory",
+        "icon": "🧬",
+        "enabled": True,
+        "builtin": True,
+    },
+    {
+        "id": "reme_compactor",
+        "name": "ReMe Context Compactor",
+        "description": "Ollama-based structured summarization that compresses long conversations into Goal/Progress/Decisions/Next-Steps format",
+        "category": "memory",
+        "icon": "🗜️",
+        "enabled": True,
+        "builtin": True,
+    },
+    {
+        "id": "alfred_graph",
+        "name": "Alfred Knowledge Graph",
+        "description": "SQLite knowledge graph with nodes, relationships, and natural-language keyword querying",
+        "category": "memory",
+        "icon": "🕸️",
+        "enabled": True,
+        "builtin": True,
+    },
+    {
+        "id": "cot_engine",
+        "name": "CoT Reasoning Engine",
+        "description": "Structured chain-of-thought with OBSERVE/ANALYZE/PLAN/VERIFY phases injected before every LLM response",
+        "category": "quality",
+        "icon": "🧠",
+        "enabled": True,
+        "builtin": True,
+    },
+    {
+        "id": "personaplex_intercom",
+        "name": "PersonaPlex Intercom",
+        "description": "Real-time voice call channel — browser STT → WebSocket → Fish Speech TTS with auto-restart on silence",
+        "category": "io",
+        "icon": "📞",
+        "enabled": True,
+        "builtin": True,
+    },
+    {
+        "id": "bandit_router",
+        "name": "Bandit Router",
+        "description": "Multi-armed bandit model selection that learns which model performs best per task type",
+        "category": "ops",
+        "icon": "🎰",
+        "enabled": True,
+        "builtin": True,
+    },
+    {
+        "id": "loop_guard",
+        "name": "LoopGuard",
+        "description": "Detects and breaks infinite agent loops using semantic deduplication of repeated subtasks",
+        "category": "ops",
+        "icon": "🔒",
+        "enabled": True,
+        "builtin": True,
+    },
+    {
+        "id": "vram_scheduler",
+        "name": "VRAM Scheduler",
+        "description": "Tracks GPU memory per model, auto-unloads LRU models when VRAM is tight, priority queues concurrent requests",
+        "category": "ops",
+        "icon": "📟",
+        "enabled": True,
+        "builtin": True,
+    },
+    {
+        "id": "prompt_injection_scanner",
+        "name": "Prompt Injection Scanner",
+        "description": "Regex + heuristic scanner that flags and blocks adversarial instructions hidden in user input or scraped web content",
+        "category": "quality",
+        "icon": "🛡️",
         "enabled": True,
         "builtin": True,
     },
@@ -5467,11 +6838,19 @@ async def autonomous_reset():
 
 
 def _find_dist_dir() -> Path | None:
-    """Locate the frontend dist/ directory."""
-    candidates = [
-        _BASE / "dist",
-        Path(__file__).resolve().parent / "dist",
-    ]
+    """Locate the frontend dist/ to serve.
+
+    Frozen: PyInstaller bundles backend/dist as <_MEIPASS>/dist (build_exe.py).
+    Dev: prefer the project-root dist/ — that's what `npm run build` writes.
+    backend/dist/ is only a packaging artifact refreshed by build_exe.py, so
+    preferring it in dev served a stale UI. (Both candidates previously resolved
+    to backend/dist, so the root build was never even considered.)
+    """
+    here = Path(__file__).resolve().parent
+    if getattr(sys, "frozen", False):
+        candidates = [_BASE / "dist"]
+    else:
+        candidates = [here.parent / "dist", here / "dist"]
     for d in candidates:
         if d.exists() and (d / "index.html").exists():
             return d
@@ -5666,6 +7045,60 @@ async def process_file(req: FileProcessRequest):
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # ── --selftest: verify the bundle before anything else ────────────────
+    # PyInstaller happily produces an exe that starts fine but is missing a
+    # dependency it never saw (lazy imports, or a package absent from the build
+    # env). Those failures only surface when a user hits the feature. This runs
+    # inside the frozen exe, so it checks what actually shipped.
+    if "--selftest" in sys.argv:
+        failures: list[str] = []
+
+        REQUIRED = [
+            "fastapi", "uvicorn", "httpx", "pydantic", "chromadb", "ollama",
+            "psutil", "bs4", "trafilatura", "lxml", "pdfplumber", "docx",
+            "duckduckgo_search", "rank_bm25", "faster_whisper", "pyttsx3",
+            "yt_dlp", "webview", "cryptography",
+        ]
+        for mod in REQUIRED:
+            try:
+                importlib.import_module(mod)
+            except Exception as e:
+                failures.append(f"import {mod}: {type(e).__name__}: {e}")
+
+        # yt-dlp resolves extractors through importlib, so a successful
+        # `import yt_dlp` does NOT prove the extractors got bundled.
+        try:
+            from yt_dlp.extractor import get_info_extractor
+            get_info_extractor("Youtube")
+        except Exception as e:
+            failures.append(f"yt_dlp Youtube extractor: {type(e).__name__}: {e}")
+
+        # Bundled frontend
+        try:
+            d = _find_dist_dir()
+            if not d or not (Path(d) / "index.html").exists():
+                failures.append(f"frontend dist/index.html not found (dist={d})")
+        except Exception as e:
+            failures.append(f"dist lookup: {type(e).__name__}: {e}")
+
+        # The sandbox must actually reject an escape, not merely import.
+        try:
+            import code_sandbox
+            code_sandbox.check_code("import os")
+            failures.append("code_sandbox did NOT reject 'import os'")
+        except code_sandbox.UnsafeCode:
+            pass
+        except Exception as e:
+            failures.append(f"code_sandbox: {type(e).__name__}: {e}")
+
+        if failures:
+            print("SELFTEST FAILED")
+            for f in failures:
+                print(f"  - {f}")
+            sys.exit(1)
+        print(f"SELFTEST OK ({len(REQUIRED)} modules, extractors, frontend)")
+        sys.exit(0)
+
     import signal
     import subprocess
     import threading
@@ -5723,6 +7156,12 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[cleanup] Port scan failed (non-fatal): {e}")
 
+    if BIND_HOST == "127.0.0.1":
+        print("[startup] Binding 127.0.0.1 (this machine only)")
+    else:
+        print(f"[startup] WARNING: binding {BIND_HOST} — ECHO has no "
+              "authentication, so anyone who can reach this port has full access")
+
     print("[startup] Checking for stale processes on port %d..." % APP_PORT)
     _kill_old_port_users(APP_PORT)
     # Brief pause to let the OS release the socket
@@ -5730,7 +7169,7 @@ if __name__ == "__main__":
 
     # ── Start uvicorn in a background thread ─────────────────────────────
     def _start_server():
-        uvicorn.run(app, host="0.0.0.0", port=APP_PORT, log_level="info")
+        uvicorn.run(app, host=BIND_HOST, port=APP_PORT, log_level="info")
 
     server_thread = threading.Thread(target=_start_server, daemon=True)
     server_thread.start()
