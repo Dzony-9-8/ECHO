@@ -150,6 +150,44 @@ def test_committee_brief_returns_empty_on_failure():
     assert got == ""
 
 
+# ── routing ──────────────────────────────────────────────────────────────────
+
+LONG_TASK = "explain how to implement a resilient retry policy for flaky HTTP calls"
+
+
+def test_researcher_still_routes_to_thought_graph():
+    assert main._prepass_kind("Researcher", LONG_TASK) == "thought_graph"
+
+
+def test_developer_routes_to_architect_not_thinking_loop():
+    assert main._prepass_kind("Developer", LONG_TASK) == "architect"
+
+
+def test_critic_with_prior_output_routes_to_committee():
+    assert main._prepass_kind("Critic", LONG_TASK, has_prior=True) == "committee"
+
+
+def test_critic_without_prior_output_falls_back_to_thinking_loop():
+    """No dependency result means nothing to review, but the agent should not
+    lose its pre-pass altogether."""
+    assert main._prepass_kind("Critic", LONG_TASK, has_prior=False) == "thinking_loop"
+
+
+def test_planner_and_supervisor_still_use_thinking_loop():
+    for agent in ["Planner", "Supervisor"]:
+        assert main._prepass_kind(agent, LONG_TASK) == "thinking_loop"
+
+
+def test_short_simple_task_gets_no_prepass_for_generic_agents():
+    assert main._prepass_kind("Supervisor", "hi") is None
+
+
+def test_specialised_agents_get_their_prepass_even_for_short_tasks():
+    """Developer and Critic are routed by role, not by _needs_thinking."""
+    assert main._prepass_kind("Developer", "hi") == "architect"
+    assert main._prepass_kind("Critic", "hi", has_prior=True) == "committee"
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in sorted(globals().items())
              if n.startswith("test_") and callable(f)]

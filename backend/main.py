@@ -2241,6 +2241,25 @@ async def committee_brief(prior_output: str, model: str) -> str:
         return ""
 
 
+def _prepass_kind(agent: str, task: str, has_prior: bool = False) -> str | None:
+    """Which reasoning pre-pass runs before this agent, if any.
+
+    Developer and Critic are routed by role: their specialised briefs replace
+    the generic thinking_loop rather than stacking on it, so each agent carries
+    exactly one brief. A Critic with no dependency result has nothing to review
+    and falls back to the generic pre-pass.
+    """
+    if agent == "Researcher":
+        return "thought_graph"
+    if agent == "Developer":
+        return "architect"
+    if agent == "Critic" and has_prior:
+        return "committee"
+    if _needs_thinking(task):
+        return "thinking_loop"
+    return None
+
+
 async def run_pipeline(
     plan: TaskPlan,
     system_prompt: str,
@@ -4163,8 +4182,13 @@ async def chat(req: ChatRequest):
                                         if context_parts:
                                             _agent_msgs.insert(-1, {"role": "system", "content": "Previous agent results:\n" + "\n\n".join(context_parts)})
 
-                                    # ── CoT: inject structured reasoning before LLM call ──────────
-                                    if st.agent == "Researcher":
+                                    # ── Pre-pass: brief the agent before it runs ──────────────────
+                                    _prior_id = next((dep for dep in st.depends_on
+                                                      if dep in subtask_results), "")
+                                    _prior = subtask_results.get(_prior_id, "")
+                                    _kind = _prepass_kind(st.agent, st.task, has_prior=bool(_prior))
+
+                                    if _kind == "thought_graph":
                                         # Thought Graph: parallel reasoning paths for research tasks
                                         think_start = {"type": "step", "agent": st.agent, "text": "Exploring reasoning paths", "status": "start", "phase": "THINKING", "detail": "Generating multi-perspective analysis"}
                                         yield f"data: {json.dumps(think_start)}\n\n"
@@ -4179,7 +4203,26 @@ async def chat(req: ChatRequest):
                                             pass
                                         think_done = {"type": "step", "agent": st.agent, "text": "Reasoning paths evaluated", "status": "done", "phase": "THINKING"}
                                         yield f"data: {json.dumps(think_done)}\n\n"
-                                    elif _needs_thinking(st.task):
+
+                                    elif _kind == "architect":
+                                        arch_start = {"type": "step", "agent": st.agent, "text": "Architect designing solution", "status": "start", "phase": "THINKING", "detail": "High-level design before implementation"}
+                                        yield f"data: {json.dumps(arch_start)}\n\n"
+                                        _arch = await architect_brief(st.task, agent_model)
+                                        if _arch:
+                                            _agent_msgs.insert(-1, {"role": "system", "content": f"[ARCHITECT BRIEF]\n{_arch}"})
+                                        arch_done = {"type": "step", "agent": st.agent, "text": "Architecture ready", "status": "done", "phase": "THINKING"}
+                                        yield f"data: {json.dumps(arch_done)}\n\n"
+
+                                    elif _kind == "committee":
+                                        crit_start = {"type": "step", "agent": st.agent, "text": "Critic committee reviewing", "status": "start", "phase": "THINKING", "detail": "Reviewer · Auditor"}
+                                        yield f"data: {json.dumps(crit_start)}\n\n"
+                                        _committee = await committee_brief(_prior, agent_model)
+                                        if _committee:
+                                            _agent_msgs.insert(-1, {"role": "system", "content": f"[COMMITTEE BRIEF]\n{_committee}"})
+                                        crit_done = {"type": "step", "agent": st.agent, "text": "Committee brief ready", "status": "done", "phase": "THINKING"}
+                                        yield f"data: {json.dumps(crit_done)}\n\n"
+
+                                    elif _kind == "thinking_loop":
                                         # Structured CoT for complex tasks
                                         think_start = {"type": "step", "agent": st.agent, "text": "Structured reasoning", "status": "start", "phase": "THINKING", "detail": "OBSERVE → ANALYZE → PLAN → VERIFY"}
                                         yield f"data: {json.dumps(think_start)}\n\n"
