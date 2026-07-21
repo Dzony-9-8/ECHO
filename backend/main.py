@@ -1804,8 +1804,12 @@ SUBTEAM_MAX_TOKENS: dict[str, int] = {
 
 # No num_gpu: ac10f5f removed the forced full-GPU offload that caused
 # pathological first-token latency. Layer placement stays Ollama's decision.
+# No num_ctx: Ollama reloads the model runner whenever num_ctx changes
+# (~7s on this machine), so setting it here forced a reload for the
+# pre-pass and another reload back for the agent's own call right after.
+# Leaving it unset lets the pre-pass inherit the caller's context and
+# share one runner with the call that follows it. Do not re-add it.
 SUBTEAM_OLLAMA_OPTIONS: dict = {
-    "num_ctx":        1024,   # micro-agents see one task, not a conversation
     "repeat_penalty": 1.1,
     "top_k":          10,
     "top_p":          0.9,
@@ -2258,6 +2262,25 @@ def _prepass_kind(agent: str, task: str, has_prior: bool = False) -> str | None:
     if _needs_thinking(task):
         return "thinking_loop"
     return None
+
+
+def _pick_prior(depends_on: list[str], subtask_results: dict[str, str],
+                 agent_by_id: dict[str, str]) -> str:
+    """Which upstream result the Critic's committee should review.
+
+    Prefers the Developer's output: the planner routinely produces
+    Researcher + Developer -> Critic, and taking the first satisfied
+    dependency there sent the committee the Researcher's prose while the
+    code it exists to review went unread. Falls back to the most recent
+    satisfied dependency.
+    """
+    satisfied = [dep for dep in depends_on if dep in subtask_results]
+    if not satisfied:
+        return ""
+    for dep in reversed(satisfied):
+        if agent_by_id.get(dep) == "Developer":
+            return subtask_results[dep]
+    return subtask_results[satisfied[-1]]
 
 
 async def run_pipeline(
@@ -4183,9 +4206,10 @@ async def chat(req: ChatRequest):
                                             _agent_msgs.insert(-1, {"role": "system", "content": "Previous agent results:\n" + "\n\n".join(context_parts)})
 
                                     # ── Pre-pass: brief the agent before it runs ──────────────────
-                                    _prior_id = next((dep for dep in st.depends_on
-                                                      if dep in subtask_results), "")
-                                    _prior = subtask_results.get(_prior_id, "")
+                                    _prior = _pick_prior(
+                                        st.depends_on, subtask_results,
+                                        {s.id: s.agent for s in plan.subtasks},
+                                    )
                                     _kind = _prepass_kind(st.agent, st.task, has_prior=bool(_prior))
 
                                     if _kind == "thought_graph":

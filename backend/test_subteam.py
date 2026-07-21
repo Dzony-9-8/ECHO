@@ -57,10 +57,13 @@ def test_subteam_budgets_are_defined_for_the_ported_roles_only():
             f"{dropped} is unused -- the Research Team was not ported"
 
 
-def test_subteam_options_never_force_gpu_layers():
-    """ac10f5f removed forced full-GPU offload; it must not return here."""
+def test_subteam_options_never_force_gpu_layers_or_reload_the_runner():
+    """ac10f5f removed forced full-GPU offload; it must not return here.
+    num_ctx must also stay absent: setting it forces an Ollama model
+    runner reload (~7s) for the pre-pass and again for the agent call
+    that follows it, so the pre-pass should inherit the caller's context."""
     assert "num_gpu" not in main.SUBTEAM_OLLAMA_OPTIONS
-    assert main.SUBTEAM_OLLAMA_OPTIONS["num_ctx"] == 1024
+    assert "num_ctx" not in main.SUBTEAM_OLLAMA_OPTIONS
 
 
 # ── architect_brief ──────────────────────────────────────────────────────────
@@ -186,6 +189,50 @@ def test_specialised_agents_get_their_prepass_even_for_short_tasks():
     """Developer and Critic are routed by role, not by _needs_thinking."""
     assert main._prepass_kind("Developer", "hi") == "architect"
     assert main._prepass_kind("Critic", "hi", has_prior=True) == "committee"
+
+
+# ── committee input selection ────────────────────────────────────────────────
+
+def test_pick_prior_prefers_the_developers_output():
+    """Researcher + Developer -> Critic is a shape the planner produces; the
+    committee must review the code, not the prose."""
+    got = main._pick_prior(
+        ["t1", "t2"],
+        {"t1": "research prose", "t2": "def f(): pass"},
+        {"t1": "Researcher", "t2": "Developer"},
+    )
+    assert got == "def f(): pass"
+
+
+def test_pick_prior_finds_the_developer_in_any_position():
+    got = main._pick_prior(
+        ["t1", "t2"],
+        {"t1": "def f(): pass", "t2": "research prose"},
+        {"t1": "Developer", "t2": "Researcher"},
+    )
+    assert got == "def f(): pass"
+
+
+def test_pick_prior_falls_back_to_the_most_recent_dependency():
+    got = main._pick_prior(
+        ["t1", "t2"],
+        {"t1": "first", "t2": "second"},
+        {"t1": "Researcher", "t2": "Planner"},
+    )
+    assert got == "second"
+
+
+def test_pick_prior_ignores_unsatisfied_dependencies():
+    got = main._pick_prior(
+        ["t1", "t2", "t3"],
+        {"t2": "only this one ran"},
+        {"t1": "Developer", "t2": "Researcher", "t3": "Developer"},
+    )
+    assert got == "only this one ran"
+
+
+def test_pick_prior_returns_empty_when_nothing_is_satisfied():
+    assert main._pick_prior(["t1"], {}, {"t1": "Developer"}) == ""
 
 
 if __name__ == "__main__":
