@@ -1,7 +1,13 @@
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-psutil==6.1.0
-GPUtil==1.4.0
+# Floors, not pins. These three were pinned with == to versions that have since
+# been overtaken (0.115.0 / 0.32.0 / 6.1.0 against 0.127 / 0.40 / 7.2 in use),
+# so installing this file downgraded a working environment — and PyInstaller
+# builds resolve against it, so the packaged exe stopped matching the one being
+# developed against.
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+psutil>=6.1.0
+# GPUtil removed: unmaintained, and _gpu_info_via_nvidia_smi() is what actually
+# reports the GPU. It is still imported opportunistically if present.
 httpx[http2]>=0.27.0
 chromadb>=0.5.23
 ollama>=0.4.0

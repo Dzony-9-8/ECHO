@@ -55,3 +55,8 @@ OPTIMIZATION_REPORT.pdf
 
 # local build venv (clean interpreter for build_exe.py)
 .venv-build/
+
+# Backend dev-server redirect targets (not *.log, so the existing rule missed
+# them and one kept turning up as a stray untracked file).
+backend_log.txt
+backend_err.txt
