@@ -461,6 +461,82 @@ AGENT_MODEL_MAP = {
     "default": "llama3.2:3b",
 }
 
+# Per-agent token budgets.
+# Internal agents (Planner, Critic) stay tight to prevent bloat.
+# Output agents (Developer, Supervisor) are uncapped — user gets the full response.
+AGENT_MAX_TOKENS: dict[str, int] = {
+    "Planner":    400,    # JSON decomposition only
+    "Researcher": 1200,   # Detailed analysis
+    "Developer":  4096,   # Full code — no artificial cut-off
+    "Critic":     400,    # Review notes, focused
+    "Supervisor": 3500,   # Complete polished synthesis
+}
+
+# Sub-team micro-agent token budgets (tight — each covers one narrow angle)
+SUBTEAM_MAX_TOKENS: dict[str, int] = {
+    "Scout":      150,
+    "Analyst":    150,
+    "Verifier":   100,
+    "Architect":  200,
+    "Reviewer":   120,
+    "Auditor":    120,
+}
+
+# Per-agent Ollama sampling options.
+# Tuned per role: Planner/Critic → near-deterministic; Developer → focused code;
+# Researcher/Supervisor → some creativity; all have repeat_penalty to prevent rambling.
+AGENT_OLLAMA_OPTIONS: dict[str, dict] = {
+    "Planner": {
+        "num_ctx":        2048,   # JSON decomposition needs tiny context → faster TTFT
+        "repeat_penalty": 1.1,
+        "top_k":          10,
+        "top_p":          0.9,
+        "num_keep":       256,
+    },
+    "Researcher": {
+        "num_ctx":        4096,
+        "repeat_penalty": 1.15,   # Strong — prevent repetitive analysis
+        "top_k":          40,
+        "top_p":          0.92,
+        "num_keep":       256,
+    },
+    "Developer": {
+        "num_ctx":        8192,   # Large — long implementations need full context
+        "repeat_penalty": 1.08,   # Mild — code has natural structural repetition
+        "top_k":          20,
+        "top_p":          0.95,
+        "num_keep":       256,
+    },
+    "Critic": {
+        "num_ctx":        4096,
+        "repeat_penalty": 1.1,
+        "top_k":          20,
+        "top_p":          0.9,
+        "num_keep":       256,
+    },
+    "Supervisor": {
+        "num_ctx":        8192,   # Must see all agent results
+        "repeat_penalty": 1.15,   # Strong — synthesis must not echo inputs verbatim
+        "top_k":          40,
+        "top_p":          0.92,
+        "num_keep":       256,
+    },
+    "default": {
+        "num_ctx":        4096,
+        "repeat_penalty": 1.1,
+        "num_keep":       256,
+    },
+}
+
+# Sub-team micro-agent Ollama options — ultra-tight for speed
+SUBTEAM_OLLAMA_OPTIONS: dict = {
+    "num_ctx":        1024,
+    "repeat_penalty": 1.1,
+    "top_k":          10,
+    "top_p":          0.9,
+    "num_keep":       0,
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Vision model support
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1150,44 +1226,58 @@ CRITICAL INSTRUCTION: You must ALWAYS respond entirely in English. Never use Ser
 # so each agent role behaves correctly (especially Developer: produce actual code, not descriptions)
 # v3.5: Enhanced with rich personality traits for each agent role
 AGENT_SPECIFIC_PROMPTS: dict[str, str] = {
-    "Developer": """You are the Developer — a meticulous, pragmatic code craftsman. Your personality: perfectionist about correctness, hates incomplete implementations, always writes production-ready code.
+    "Developer": """You are the Developer — a meticulous, pragmatic code craftsman. Perfectionist about correctness, hates incomplete implementations, always writes production-ready code.
 
-You are the Developer agent in ECHO — an expert code generator.
 Your ONLY job is to produce actual, complete, working code.
 
-CRITICAL RULES:
-- When asked to create ANYTHING (animations, logos, UIs, functions, scripts, components), write the complete, runnable code IMMEDIATELY
+RULES:
+- Write the complete, runnable code IMMEDIATELY — no preamble, no explanation before the code
 - Use HTML/CSS/JavaScript for visual/interactive things (logos, animations, UIs, games)
 - Use Python for algorithms, data processing, scripts
-- Include ALL necessary code — no placeholders, no "TODO", no "implement X later"
-- NEVER describe what you would create — CREATE IT directly with full code
-- NEVER say "I would implement X by..." — just implement X with the actual code
+- Include ALL necessary code — no placeholders, no "TODO", no stub functions
+- NEVER describe what you would create — CREATE IT with full working code
 - Format in markdown code blocks with the correct language tag (```html, ```python, etc.)
-- One self-contained working artifact is always preferred over fragmented pieces""",
+- One self-contained working artifact over fragmented pieces
+- Never repeat yourself. Say something once, completely, then stop.""",
 
-    "Researcher": """You are the Researcher — curious, rigorous, and evidence-driven. Your personality: analytical, skeptical of unverified claims, loves citing reasoning chains. You go deep on topics, explore multiple angles, and always acknowledge uncertainty where it exists.
+    "Researcher": """You are the Researcher — curious, rigorous, and evidence-driven. Analytical, skeptical of unverified claims, always acknowledges uncertainty.
 
-You are the Researcher agent in ECHO. Your job is deep analysis and information gathering.
-Provide thorough findings with clear reasoning chains. When your research feeds a coding task,
-describe the best approach, relevant libraries, and key techniques the Developer should use.""",
+Your job is deep analysis and information gathering.
+Provide thorough findings with clear reasoning chains.
+When your research feeds a coding task, describe the best approach, relevant libraries, and key techniques.
 
-    "Supervisor": """You are the Supervisor — decisive, coordination-focused, and result-oriented. Your personality: authoritative but fair, pragmatic, focused on synthesis. You cut through noise to deliver clean, integrated outputs. You NEVER fragment code — always present complete working implementations.
+RULES:
+- Only state facts you are confident in. Prefix uncertain claims with "uncertain:"
+- Never repeat information you already stated
+- Be direct and structured — no filler phrases like "Great question!" or "In conclusion"
+- Stop when the analysis is complete; do not pad with summaries""",
 
-You are the Supervisor agent in ECHO. Synthesize agent results into a single complete, polished response.
-CRITICAL: If any agent produced code blocks, PRESERVE THEM EXACTLY — output the complete code directly.
-Do NOT summarize code into plain-text descriptions. Do NOT say "A function that does X" — show the actual function.
-Combine all agent outputs naturally, removing redundancy while keeping all technical content and code intact.""",
+    "Supervisor": """You are the Supervisor — decisive, result-oriented, cuts through noise to deliver clean integrated outputs.
 
-    "Critic": """You are the Critic agent in ECHO. Your personality: sharp, exacting, constructively harsh. You find edge cases others miss. You never approve mediocre work but always suggest concrete improvements.
+Synthesize agent results into a single complete, polished response.
+
+RULES:
+- Synthesize — do NOT echo. Never copy-paste agent outputs verbatim
+- If any agent produced code blocks, PRESERVE THEM EXACTLY — output the complete code
+- Do NOT summarize code into plain-text descriptions
+- Remove all redundancy across agent outputs, keep all technical content intact
+- Never repeat yourself. One clean unified response, then stop""",
+
+    "Critic": """You are the Critic — sharp, exacting, constructively harsh. You find edge cases others miss.
 
 Review the provided code or content carefully.
-Point out specific bugs, missing edge cases, or improvements needed.
-When you identify issues in code, provide the corrected version with fixes applied.""",
 
-    "Planner": """You are the Planner — methodical, structured, and systematic. You ALWAYS think step-by-step, break problems into clear subtasks, and never skip planning phases. Your personality: organized, thorough, forward-thinking. You speak in structured bullet points and always consider dependencies between tasks.
+RULES:
+- List only real, specific issues — not vague suggestions
+- If the output is correct and complete, say so in one sentence and stop
+- When you identify bugs, provide the corrected version with fixes applied
+- Never repeat points you already made
+- Be concise: one issue = one bullet point with a concrete fix""",
 
-You are the Planner agent in ECHO. Decompose user requests into clear subtasks for specialized agents.
-For code/visual creation tasks (animations, logos, UIs, components, scripts), always assign the PRIMARY task to Developer.
+    "Planner": """You are the Planner — methodical, structured, systematic. Always decomposes problems into the minimum effective set of subtasks.
+
+Decompose user requests into clear subtasks for specialized agents.
+For code/visual creation tasks (animations, logos, UIs, scripts), always assign the PRIMARY task to Developer.
 Keep subtask descriptions concrete, specific, and actionable.""",
 }
 
@@ -1588,13 +1678,18 @@ Available agents:
 - Critic: Quality review, fact-checking, hallucination detection
 
 Rules:
-1. For simple questions/greetings, return a single Supervisor subtask
-2. For complex tasks, break into 2-4 subtasks with appropriate agents
-3. Mark dependencies — a subtask can depend on previous subtask IDs
-4. Each subtask should be self-contained with clear instructions
+1. For simple questions/greetings → single Supervisor subtask.
+2. For complex tasks → 2-4 subtasks with appropriate agents.
+3. PARALLELISM FIRST: if subtasks don't need each other's output, set depends_on:[] for BOTH so they run simultaneously. Only add a dependency when an agent genuinely needs the prior result.
+4. Each subtask must be self-contained with clear, concrete instructions.
 
-You MUST respond with ONLY a JSON object in this exact format, no other text:
-{"subtasks": [{"id": "t1", "agent": "Developer", "task": "Write a Python function that...", "depends_on": []}, {"id": "t2", "agent": "Critic", "task": "Review the code from t1 for...", "depends_on": ["t1"]}]}"""
+PARALLEL example (Researcher + Developer run at the same time, Critic waits for both):
+{"subtasks":[{"id":"t1","agent":"Researcher","task":"Research the best Python web scraping libraries (requests, httpx, playwright) and their trade-offs","depends_on":[]},{"id":"t2","agent":"Developer","task":"Write a comprehensive Python web scraper with error handling and rate limiting","depends_on":[]},{"id":"t3","agent":"Critic","task":"Review the scraper from t2, cross-check with research in t1, identify any issues","depends_on":["t1","t2"]}]}
+
+SEQUENTIAL example (Developer needs Researcher's findings first):
+{"subtasks":[{"id":"t1","agent":"Researcher","task":"Research the fastest JSON parsing approach in Python","depends_on":[]},{"id":"t2","agent":"Developer","task":"Implement a high-performance JSON parser using the approach from t1","depends_on":["t1"]}]}
+
+You MUST respond with ONLY a JSON object. No other text, no markdown, no explanation."""
 
 
 class Subtask(BaseModel):
@@ -2791,21 +2886,25 @@ async def ollama_chat_text(
     model: str | None = None,
     temperature: float = 0.7,
     max_tokens: int = 2048,
+    extra_options: dict | None = None,
 ) -> str:
     """Non-streaming Ollama call. Returns plain text response.
-    v3.5: num_keep=256 for KV cache reuse across multi-turn calls.
+    extra_options: per-agent sampling overrides (num_ctx, repeat_penalty, top_k, etc.)
     """
     model = model or AGENT_MODEL_MAP.get("default", "llama3.1:8b")
+    opts: dict = {
+        "temperature": temperature,
+        "num_predict": max_tokens,
+        "num_gpu": 99,
+        "num_keep": 256,
+    }
+    if extra_options:
+        opts.update(extra_options)
     payload = {
         "model": model,
         "messages": messages,
         "stream": False,
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-            "num_gpu": 99,
-            "num_keep": 256,  # v3.5: KV cache reuse
-        },
+        "options": opts,
         "keep_alive": "10m",
     }
 
@@ -2827,21 +2926,26 @@ async def ollama_chat_stream_tokens(
     temperature: float = 0.7,
     max_tokens: int = 2048,
     on_token: "asyncio.Queue | None" = None,
+    extra_options: dict | None = None,
 ) -> str:
     """Streaming Ollama call that fires on_token queue per token and returns full text.
     Used to pipe agent thought tokens into the SSE stream in real-time.
+    extra_options: per-agent sampling overrides (num_ctx, repeat_penalty, top_k, etc.)
     """
     model = model or AGENT_MODEL_MAP.get("default", "llama3.1:8b")
+    opts: dict = {
+        "temperature": temperature,
+        "num_predict": max_tokens,
+        "num_gpu": 99,
+        "num_keep": 256,
+    }
+    if extra_options:
+        opts.update(extra_options)
     payload = {
         "model": model,
         "messages": messages,
         "stream": True,
-        "options": {
-            "temperature": temperature,
-            "num_predict": max_tokens,
-            "num_gpu": 99,
-            "num_keep": 256,
-        },
+        "options": opts,
         "keep_alive": "10m",
     }
 
@@ -3783,48 +3887,133 @@ async def chat(req: ChatRequest):
                                         if context_parts:
                                             _agent_msgs.insert(-1, {"role": "system", "content": "Previous agent results:\n" + "\n\n".join(context_parts)})
 
-                                    # ── CoT: inject structured reasoning before LLM call ──────────
+                                    # ── Per-agent options + token budget ──────────────────────────
+                                    _eff_max_tokens = AGENT_MAX_TOKENS.get(st.agent, max_tokens)
+                                    # Build per-agent Ollama options (exclude temperature — comes from request)
+                                    _agent_opts = {
+                                        k: v for k, v in
+                                        AGENT_OLLAMA_OPTIONS.get(st.agent, AGENT_OLLAMA_OPTIONS["default"]).items()
+                                        if k != "temperature"
+                                    }
+
+                                    # ── Sub-team micro-agents: each role gets a focused pre-pass ──
                                     if st.agent == "Researcher":
-                                        # Thought Graph: parallel reasoning paths for research tasks
-                                        think_start = {"type": "step", "agent": st.agent, "text": "Exploring reasoning paths", "status": "start", "phase": "THINKING", "detail": "Generating multi-perspective analysis"}
-                                        yield f"data: {json.dumps(think_start)}\n\n"
+                                        # Research Team: Scout + Analyst + Verifier run in parallel
+                                        team_start = {
+                                            "type": "step", "agent": st.agent,
+                                            "text": "Research team assembling",
+                                            "status": "start", "phase": "THINKING",
+                                            "detail": "Scout · Analyst · Verifier"
+                                        }
+                                        yield f"data: {json.dumps(team_start)}\n\n"
                                         try:
-                                            _thought = await asyncio.wait_for(
-                                                thought_graph(st.task, model=agent_model, n_paths=3),
-                                                timeout=90,
+                                            _scout_msgs = [
+                                                {"role": "system", "content": "You are a Research Scout. Extract key facts and relevant information. Be ultra-concise. Never repeat yourself."},
+                                                {"role": "user", "content": f"Find key facts about: {st.task}"},
+                                            ]
+                                            _analyst_msgs = [
+                                                {"role": "system", "content": "You are a Research Analyst. Identify core concepts, patterns, technical implications. Ultra-concise. Never repeat yourself."},
+                                                {"role": "user", "content": f"Analyze concepts and implications of: {st.task}"},
+                                            ]
+                                            _verifier_msgs = [
+                                                {"role": "system", "content": "You are a Research Verifier. Identify edge cases, pitfalls, and what to watch for. Ultra-concise. Never repeat yourself."},
+                                                {"role": "user", "content": f"What are edge cases and pitfalls for: {st.task}"},
+                                            ]
+                                            _scout, _analyst, _verifier = await asyncio.gather(
+                                                ollama_chat_text(_scout_msgs, model=agent_model, max_tokens=SUBTEAM_MAX_TOKENS["Scout"], extra_options=SUBTEAM_OLLAMA_OPTIONS),
+                                                ollama_chat_text(_analyst_msgs, model=agent_model, max_tokens=SUBTEAM_MAX_TOKENS["Analyst"], extra_options=SUBTEAM_OLLAMA_OPTIONS),
+                                                ollama_chat_text(_verifier_msgs, model=agent_model, max_tokens=SUBTEAM_MAX_TOKENS["Verifier"], extra_options=SUBTEAM_OLLAMA_OPTIONS),
                                             )
-                                            if _thought:
-                                                _agent_msgs.insert(-1, {"role": "system", "content": f"[THOUGHT GRAPH — best reasoning path]\n{_thought}"})
+                                            _team_brief = (
+                                                f"[Scout]\n{_scout}\n\n"
+                                                f"[Analyst]\n{_analyst}\n\n"
+                                                f"[Verifier]\n{_verifier}"
+                                            )
+                                            _agent_msgs.insert(-1, {"role": "system", "content": f"[RESEARCH TEAM BRIEF]\n{_team_brief}"})
                                         except Exception:
                                             pass
-                                        think_done = {"type": "step", "agent": st.agent, "text": "Reasoning paths evaluated", "status": "done", "phase": "THINKING"}
-                                        yield f"data: {json.dumps(think_done)}\n\n"
-                                    elif _needs_thinking(st.task):
-                                        # Structured CoT for complex tasks
-                                        think_start = {"type": "step", "agent": st.agent, "text": "Structured reasoning", "status": "start", "phase": "THINKING", "detail": "OBSERVE → ANALYZE → PLAN → VERIFY"}
-                                        yield f"data: {json.dumps(think_start)}\n\n"
+                                        team_done = {
+                                            "type": "step", "agent": st.agent,
+                                            "text": "Research brief ready",
+                                            "status": "done", "phase": "THINKING"
+                                        }
+                                        yield f"data: {json.dumps(team_done)}\n\n"
+
+                                    elif st.agent == "Developer":
+                                        # Developer Team: Architect designs the approach first
+                                        arch_start = {
+                                            "type": "step", "agent": st.agent,
+                                            "text": "Architect designing solution",
+                                            "status": "start", "phase": "THINKING",
+                                            "detail": "High-level design before implementation"
+                                        }
+                                        yield f"data: {json.dumps(arch_start)}\n\n"
                                         try:
-                                            _thought = await asyncio.wait_for(
-                                                thinking_loop(st.task, model=agent_model),
-                                                timeout=40,
+                                            _arch_msgs = [
+                                                {"role": "system", "content": "You are a Software Architect. Design a concise technical approach: key components and decisions in 3 bullet points max. No code. Never repeat yourself."},
+                                                {"role": "user", "content": f"Design the approach for: {st.task}"},
+                                            ]
+                                            _arch = await asyncio.wait_for(
+                                                ollama_chat_text(_arch_msgs, model=agent_model, max_tokens=SUBTEAM_MAX_TOKENS["Architect"], extra_options=SUBTEAM_OLLAMA_OPTIONS),
+                                                timeout=25,
                                             )
-                                            if _thought:
-                                                _agent_msgs.insert(-1, {"role": "system", "content": f"[REASONING]\n{_thought}"})
+                                            if _arch:
+                                                _agent_msgs.insert(-1, {"role": "system", "content": f"[ARCHITECT BRIEF]\n{_arch}"})
                                         except Exception:
                                             pass
-                                        think_done = {"type": "step", "agent": st.agent, "text": "Reasoning complete", "status": "done", "phase": "THINKING"}
-                                        yield f"data: {json.dumps(think_done)}\n\n"
+                                        arch_done = {
+                                            "type": "step", "agent": st.agent,
+                                            "text": "Architecture ready",
+                                            "status": "done", "phase": "THINKING"
+                                        }
+                                        yield f"data: {json.dumps(arch_done)}\n\n"
+
+                                    elif st.agent == "Critic":
+                                        # Critic Committee: Reviewer + Auditor check from two angles in parallel
+                                        crit_start = {
+                                            "type": "step", "agent": st.agent,
+                                            "text": "Critic committee reviewing",
+                                            "status": "start", "phase": "THINKING",
+                                            "detail": "Reviewer · Auditor"
+                                        }
+                                        yield f"data: {json.dumps(crit_start)}\n\n"
+                                        try:
+                                            _prior_id = next((dep for dep in st.depends_on if dep in subtask_results), "")
+                                            _prior = subtask_results.get(_prior_id, "")
+                                            _reviewer_msgs = [
+                                                {"role": "system", "content": "You are a Code Reviewer. Check for correctness, logic errors, missing cases. Be concise. Never repeat yourself."},
+                                                {"role": "user", "content": f"Review this output for correctness:\n{_prior[:800]}"},
+                                            ]
+                                            _auditor_msgs = [
+                                                {"role": "system", "content": "You are a Quality Auditor. Check for clarity, completeness, best practices. Be concise. Never repeat yourself."},
+                                                {"role": "user", "content": f"Audit this output for quality:\n{_prior[:800]}"},
+                                            ]
+                                            _reviewer_res, _auditor_res = await asyncio.gather(
+                                                ollama_chat_text(_reviewer_msgs, model=agent_model, max_tokens=SUBTEAM_MAX_TOKENS["Reviewer"], extra_options=SUBTEAM_OLLAMA_OPTIONS),
+                                                ollama_chat_text(_auditor_msgs, model=agent_model, max_tokens=SUBTEAM_MAX_TOKENS["Auditor"], extra_options=SUBTEAM_OLLAMA_OPTIONS),
+                                            )
+                                            _committee_brief = f"[Reviewer]\n{_reviewer_res}\n\n[Auditor]\n{_auditor_res}"
+                                            _agent_msgs.insert(-1, {"role": "system", "content": f"[COMMITTEE BRIEF]\n{_committee_brief}"})
+                                        except Exception:
+                                            pass
+                                        crit_done = {
+                                            "type": "step", "agent": st.agent,
+                                            "text": "Committee brief ready",
+                                            "status": "done", "phase": "THINKING"
+                                        }
+                                        yield f"data: {json.dumps(crit_done)}\n\n"
 
                                     token_queue: asyncio.Queue = asyncio.Queue()
 
-                                    # Start the LLM stream coroutine
+                                    # Start the LLM stream coroutine (per-agent budget + options)
                                     llm_task = asyncio.create_task(
                                         ollama_chat_stream_tokens(
                                             _agent_msgs,
                                             model=agent_model,
                                             temperature=temperature,
-                                            max_tokens=max_tokens,
+                                            max_tokens=_eff_max_tokens,
                                             on_token=token_queue,
+                                            extra_options=_agent_opts,
                                         )
                                     )
 
@@ -3884,7 +4073,12 @@ async def chat(req: ChatRequest):
                                     {"role": "system", "content": AGENT_SPECIFIC_PROMPTS.get("Supervisor", "Synthesize agent results.")},
                                     {"role": "user", "content": f"Question: {user_text}\n\nAgent results:\n{parts_str}"},
                                 ]
-                                synth = await ollama_chat_text(synth_msgs, model=AGENT_MODEL_MAP.get("Supervisor", "llama3.2:3b"))
+                                synth = await ollama_chat_text(
+                                    synth_msgs,
+                                    model=AGENT_MODEL_MAP.get("Supervisor", "llama3.2:3b"),
+                                    max_tokens=AGENT_MAX_TOKENS.get("Supervisor", 3500),
+                                    extra_options={k: v for k, v in AGENT_OLLAMA_OPTIONS.get("Supervisor", {}).items() if k != "temperature"},
+                                )
                                 if synth:
                                     sup_done = {"type": "step", "agent": "Supervisor", "text": "Synthesis complete", "status": "done", "phase": "FINALIZING", "detail": f"{len(synth.split())} words in final response"}
                                     yield f"data: {json.dumps(sup_done)}\n\n"
