@@ -328,15 +328,25 @@ async def lifespan(app: FastAPI):
     unique_models = list(set(AGENT_MODEL_MAP.values()))
 
     async def _warm(mdl: str):
+        # httpx does not raise on 4xx, so the status has to be checked: this
+        # printed "[OK] Pre-warmed model: qwen2.5-coder:3b" on every startup
+        # while Ollama answered 404 model not found, and the agent pointed at
+        # it silently returned "" for every subtask it was given.
         try:
-            await client.post(
+            resp = await client.post(
                 f"{OLLAMA_URL}/api/generate",
                 json={"model": mdl, "prompt": "", "keep_alive": "10m"},
                 timeout=30,
             )
-            print(f"[OK] Pre-warmed model: {mdl}")
-        except Exception:
-            print(f"[!!] Could not pre-warm {mdl}")
+            if resp.status_code == 200:
+                print(f"[OK] Pre-warmed model: {mdl}")
+            elif resp.status_code == 404:
+                print(f"[!!] Model not installed: {mdl}  -- agents mapped to it "
+                      f"will produce nothing.  Fix: ollama pull {mdl}")
+            else:
+                print(f"[!!] Could not pre-warm {mdl}: HTTP {resp.status_code}")
+        except Exception as e:
+            print(f"[!!] Could not pre-warm {mdl}: {type(e).__name__}: {e}")
 
     await asyncio.gather(*[_warm(m) for m in unique_models])
 
@@ -506,7 +516,9 @@ AGENT_MODEL_MAP = {
     "Planner": "llama3.2:3b",
     "Supervisor": "llama3.2:3b",
     "Researcher": "llama3.2:3b",
-    "Developer": "qwen2.5-coder:3b",
+    # :3b was never installed -- it 404'd on every Developer subtask. :latest is
+    # the 7B, benchmarked here at ~34 tok/s fully on GPU even at num_ctx 8192.
+    "Developer": "qwen2.5-coder:latest",
     "Critic": "llama3.2:3b",
     "default": "llama3.2:3b",
 }
@@ -1334,13 +1346,40 @@ def classify_task(text: str) -> str:
     return best if scores[best] > 0 else "general"
 
 
+def _is_installed(name: str, available: list[str]) -> bool:
+    """Ollama reports "llama3.2:3b"; a bare "llama3.2" should match it."""
+    return any(m == name or m.split(":")[0] == name for m in available)
+
+
+def _is_chat_model(name: str) -> bool:
+    """Embedding models answer /api/tags but cannot chat, and picking one as a
+    fallback produces empty replies -- the failure this function now avoids."""
+    return "embed" not in name.lower()
+
+
 async def select_model(task_text: str, preferred_model: str | None = None) -> str:
     """Dynamically choose the best model for a task.
 
     Considers task type, model availability, and VRAM.
     """
+    available = await get_loaded_models()
+
     if preferred_model:
-        return preferred_model
+        # Verify before trusting the config. This used to return the preferred
+        # model unchecked, so AGENT_MODEL_MAP naming an uninstalled model meant
+        # every subtask for that agent got a 404 and an empty result, with no
+        # error anywhere. If availability can't be determined, trust the config
+        # rather than second-guess it on a transient failure.
+        if not available or _is_installed(preferred_model, available):
+            return preferred_model
+        fallback = AGENT_MODEL_MAP["default"]
+        _logger.warning(
+            "Model %s is not installed; falling back to %s. Fix: ollama pull %s",
+            preferred_model, fallback, preferred_model,
+        )
+        if _is_installed(fallback, available):
+            return fallback
+        # else fall through to task-type routing below
 
     task_type = classify_task(task_text)
 
@@ -1353,7 +1392,6 @@ async def select_model(task_text: str, preferred_model: str | None = None) -> st
     }
 
     candidates = type_to_models.get(task_type, ["llama3.1:8b"])
-    available = await get_loaded_models()
 
     # Pick first available candidate
     best_model = None
@@ -1363,7 +1401,13 @@ async def select_model(task_text: str, preferred_model: str | None = None) -> st
             break
 
     if best_model is None:
-        best_model = available[0] if available else AGENT_MODEL_MAP["default"]
+        # available[0] alone would happily return nomic-embed-text, which
+        # cannot chat; prefer the configured default, then any chat model.
+        chat_models = [m for m in available if _is_chat_model(m)]
+        if _is_installed(AGENT_MODEL_MAP["default"], available):
+            best_model = AGENT_MODEL_MAP["default"]
+        else:
+            best_model = chat_models[0] if chat_models else AGENT_MODEL_MAP["default"]
 
     # v3.6: Let BanditRouter potentially override with a better-performing model
     try:
