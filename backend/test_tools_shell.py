@@ -13,6 +13,8 @@ Run: python backend/test_tools_shell.py
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -81,6 +83,35 @@ def test_each_allowlisted_command_passes_the_allowlist_check():
             run_on(LOOPS[0], shell(cmd, timeout=10))
         except HTTPException as e:
             assert e.status_code != 403, f"allowlisted '{cmd}' rejected: {e.detail}"
+
+
+def test_commands_resolve_when_git_tools_are_not_on_path():
+    """The real server is launched from a shell without Git's usr\\bin on PATH,
+    where ls/cat/grep/echo/date have no binary at all -- stock Windows ships
+    none of them and echo/dir/date are cmd builtins. Every one of them 404'd."""
+    if sys.platform != "win32":
+        return
+    # Exactly the server's PATH: git reachable (its /api/tools/git works), but
+    # the usr\bin holding the Unix tools absent.
+    without_tools = os.pathsep.join(
+        seg for seg in os.environ["PATH"].split(os.pathsep)
+        if not seg.lower().replace("/", "\\").endswith("usr\\bin"))
+    saved_path, saved_cache, saved_flag = (
+        os.environ["PATH"], main._tool_path_cache, main._tool_path_resolved)
+    try:
+        os.environ["PATH"] = without_tools
+        main._tool_path_resolved = False  # force re-resolve under the new PATH
+        assert shutil.which("git", path=without_tools), "precondition: git reachable"
+        assert shutil.which("echo", path=without_tools) is None, \
+            "precondition: no echo.exe without Git's usr\\bin"
+        res = run_on(LOOPS[0], shell("echo hi"))
+        assert res["stdout"].strip() == "hi", res
+        for cmd in ["ls", "cat --version", "grep --version", "date", "wc --version"]:
+            res = run_on(LOOPS[0], shell(cmd))
+            assert res["returncode"] == 0, f"{cmd}: {res}"
+    finally:
+        os.environ["PATH"] = saved_path
+        main._tool_path_cache, main._tool_path_resolved = saved_cache, saved_flag
 
 
 def test_exe_suffix_is_accepted():

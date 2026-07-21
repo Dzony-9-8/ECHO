@@ -58,6 +58,7 @@ import mimetypes
 import os
 import platform
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -6189,6 +6190,37 @@ class GitRequest(BaseModel):
     command: str  # e.g. "log --oneline -10" or "status"
 
 
+_tool_path_cache: Optional[str] = None
+_tool_path_resolved = False
+
+
+def _tool_path() -> str:
+    """PATH to look tools up in: ours, plus Git for Windows' Unix binaries.
+
+    SAFE_SHELL_COMMANDS is Unix-shaped, but stock Windows ships almost none of
+    it, and echo/dir/date/type are cmd.exe builtins with no .exe anywhere, so
+    exec can never find them however PATH is set. Git for Windows bundles real
+    binaries for nearly all of them in usr\\bin, and ECHO already depends on git.
+
+    Appended, not prepended: where Windows does provide a tool (whoami,
+    hostname) it keeps winning, so this only ever fills in gaps.
+    """
+    global _tool_path_cache, _tool_path_resolved
+    if _tool_path_resolved:
+        return _tool_path_cache
+    _tool_path_resolved = True
+    _tool_path_cache = os.environ.get("PATH", "")
+    git = shutil.which("git")
+    if git:
+        # git.exe sits in <root>\cmd, <root>\bin or <root>\mingw64\bin.
+        for root in list(Path(git).resolve().parents)[:3]:
+            usr_bin = root / "usr" / "bin"
+            if usr_bin.is_dir():
+                _tool_path_cache += os.pathsep + str(usr_bin)
+                break
+    return _tool_path_cache
+
+
 async def _run_argv(argv: list[str], timeout: int) -> dict:
     """Run argv with no shell in between, off the event loop.
 
@@ -6201,12 +6233,19 @@ async def _run_argv(argv: list[str], timeout: int) -> dict:
     subprocess.run's own timeout kills the child; asyncio.wait_for around
     communicate() used to leave it running.
     """
+    # Resolved here rather than left to the OS because on Windows CreateProcess
+    # looks the program up in the *parent's* PATH, so handing subprocess an
+    # env with our PATH in it would not affect which binary is found.
+    exe = shutil.which(argv[0], path=_tool_path())
+    if exe is None:
+        raise FileNotFoundError(argv[0])
+
     def _call():
         # stdin=DEVNULL: an HTTP caller has no stdin to give, and inheriting the
         # server's makes argument-less `cat`/`grep`/`wc` block for the whole
         # timeout instead of returning at once.
-        return subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL,
-                              timeout=timeout, check=False)
+        return subprocess.run([exe, *argv[1:]], capture_output=True,
+                              stdin=subprocess.DEVNULL, timeout=timeout, check=False)
 
     proc = await asyncio.to_thread(_call)
     return {
