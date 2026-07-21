@@ -319,6 +319,29 @@ def resolve(text: str) -> str:
     return _REF_RE.sub(sub, text)
 
 
+def resolve_env(name: str, default: Optional[str] = None) -> Optional[str]:
+    """Read an environment variable, substituting any ``{{vault:...}}`` in it.
+
+    This is the seam between the vault and everything that makes outbound calls.
+    Configuration keeps living in environment variables, but a value may now be
+    a reference — ``IMAGE_API_KEY={{vault:openai}}`` — so the secret itself is
+    never in the environment, where it would be visible to every child process
+    and every crash dump.
+
+    Raises :class:`VaultLocked` if the value needs the vault and it is locked;
+    callers surface that rather than silently behaving as if unconfigured.
+    """
+    raw = os.environ.get(name) or default
+    if not raw:
+        return raw
+    return resolve(raw) if has_refs(raw) else raw
+
+
+def env_needs_vault(name: str) -> bool:
+    """True if this env var holds a reference — i.e. unlocking would change it."""
+    return has_refs(os.environ.get(name) or "")
+
+
 def redact(text: str) -> str:
     """Replace any secret value appearing in text with a placeholder.
 

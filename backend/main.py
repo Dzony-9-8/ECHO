@@ -4987,7 +4987,12 @@ async def odysseus_updates_check(
 ):
     """Checks the upstream Odysseus repo for commits newer than the acknowledged baseline."""
     client = await get_external_client()
-    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
+    try:
+        token = vault.resolve_env("GITHUB_TOKEN") or vault.resolve_env("GH_TOKEN")
+    except vault.VaultError:
+        # The token is a vault reference and the vault is locked. Unauthenticated
+        # requests still work here, just at a lower GitHub rate limit.
+        token = None
     return await odysseus_updates.check_updates(
         get_writable_path(), client, owner, repo, branch, token, _logger
     )
