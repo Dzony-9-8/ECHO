@@ -16,8 +16,9 @@
 - Micro-agents use the **parent agent's model** — never load a different model.
 - `SUBTEAM_OLLAMA_OPTIONS` = `{"num_ctx": 1024, "repeat_penalty": 1.1, "top_k": 10, "top_p": 0.9, "num_keep": 0}`. **Never add `num_gpu`** — `ac10f5f` removed forced GPU offload and it must not come back.
 - Budgets: Architect 200, Reviewer 120, Auditor 120. No `Scout`/`Analyst`/`Verifier` entries.
-- Every pre-pass is time-bounded (25s) and returns `""` on failure. Failures log via `_logger.warning`, never `except: pass`, and never raise into the pipeline.
-- `thought_graph` and its Researcher branch are **not** modified.
+- **The two new pre-passes only** (`architect_brief`, `committee_brief`): time-bounded at 25s, return `""` on failure, log failures via `_logger.warning` rather than `except: pass`, and never raise into the pipeline.
+- **The two existing pre-passes are moved into the new branch structure unchanged.** `thought_graph` keeps its 90s cap, `thinking_loop` its 40s, and both keep their current `except Exception: pass`. This is deliberate: rewriting merged, working code is out of scope for this port, so the constraint above does not bind them.
+- `thought_graph` itself and the Researcher routing are **not** modified.
 
 ## File Structure
 
