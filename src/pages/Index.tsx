@@ -37,6 +37,7 @@ const AboutMeView = lazy(() => import("@/components/AboutMeView"));
 const ImageEditorView = lazy(() => import("@/components/ImageEditorView"));
 const McpServersView = lazy(() => import("@/components/McpServersView"));
 const YouTubeView = lazy(() => import("@/components/YouTubeView"));
+const VaultView = lazy(() => import("@/components/VaultView"));
 
 const LazyFallback = () => (
   <div className="flex-1 flex items-center justify-center">
@@ -80,6 +81,7 @@ const Index = () => {
     imageeditor: "Image Editor",
     mcp: "MCP Servers",
     youtube: "YouTube",
+    vault: "Vault",
   };
 
   // App-wide reminder engine — fires due reminders regardless of the active view.
@@ -134,6 +136,7 @@ const Index = () => {
           {activeView === "imageeditor" && <ImageEditorView />}
           {activeView === "mcp" && <McpServersView />}
           {activeView === "youtube" && <YouTubeView onSendToChat={handlePromptSelect} />}
+          {activeView === "vault" && <VaultView />}
         </Suspense>
       </main>
     </div>
