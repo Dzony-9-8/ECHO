@@ -342,8 +342,10 @@ async def lifespan(app: FastAPI):
 
     try:
         import chromadb  # noqa: F401
+        _chroma_ok = True
         print("[OK] ChromaDB available -- RAG + Memory enabled")
     except ImportError:
+        _chroma_ok = False
         print("[!!] ChromaDB not installed  -- RAG/Memory disabled")
         print("  Enable:    pip install chromadb")
 
@@ -386,7 +388,21 @@ async def lifespan(app: FastAPI):
         print(f"[!!] Skill compiler failed: {e}")
 
     print(f"[OK] Pipeline: {' -> '.join(PIPELINE)}")
-    print(f"[OK] Features: Hybrid RAG | Web Research | BM25 | Knowledge Watcher | Workflow Builder")
+    # Report what actually loaded. This line used to list every feature
+    # unconditionally, so it advertised BM25 and the knowledge watcher even
+    # when their imports had failed a few lines above and said so.
+    _features = [
+        ("Hybrid RAG",        _chroma_ok and _BM25_AVAILABLE),
+        ("Web Research",      _DDG_AVAILABLE),
+        ("BM25",              _BM25_AVAILABLE),
+        ("Knowledge Watcher", _WATCHDOG_AVAILABLE),
+        ("Workflow Builder",  True),
+    ]
+    _on = [name for name, ok in _features if ok]
+    _off = [name for name, ok in _features if not ok]
+    print(f"[OK] Features: {' | '.join(_on) if _on else '(none)'}")
+    if _off:
+        print(f"[--] Unavailable: {' | '.join(_off)}")
     print(f"[OK] v3.5 Features: HTTP/2 | CtxWindowMgr | StreamBatching | KVCache | Thinking Loop | Thought Graph | SentinelImprove | SkillCompiler | ToolDiscovery | QuantSwitch | ProjectMode | ProgressivePipeline | SpeculativeDecode")
     print(f"[OK] Logging to: {_LOG_DIR / 'echo_backend.log'}")
     print(f"[OK] API ready at     http://localhost:8000")
