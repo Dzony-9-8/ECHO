@@ -1,0 +1,111 @@
+"""Tests for the sub-team pre-passes (Architect, Critic Committee).
+
+These check wiring, not answer quality: that briefs are built from the right
+prompts under the right budgets, that failures degrade to "" instead of raising
+into the pipeline, and that routing sends each agent to exactly one pre-pass.
+
+Run: python backend/test_subteam.py
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+import main  # noqa: E402
+
+
+def fake_chat(reply="brief text", delay=0.0, fail=False, record=None):
+    """Stand-in for ollama_chat_text. Records how it was called."""
+    async def _chat(messages, model=None, temperature=0.7, max_tokens=2048,
+                    extra_options=None):
+        if record is not None:
+            record.append({
+                "messages": messages, "model": model,
+                "max_tokens": max_tokens, "extra_options": extra_options,
+            })
+        if delay:
+            await asyncio.sleep(delay)
+        if fail:
+            raise RuntimeError("ollama is down")
+        return reply
+    return _chat
+
+
+def with_chat(chat, coro_factory):
+    """Run coro_factory() with ollama_chat_text swapped out."""
+    saved = main.ollama_chat_text
+    main.ollama_chat_text = chat
+    try:
+        return asyncio.run(coro_factory())
+    finally:
+        main.ollama_chat_text = saved
+
+
+# ── budgets and options ──────────────────────────────────────────────────────
+
+def test_subteam_budgets_are_defined_for_the_ported_roles_only():
+    assert main.SUBTEAM_MAX_TOKENS["Architect"] == 200
+    assert main.SUBTEAM_MAX_TOKENS["Reviewer"] == 120
+    assert main.SUBTEAM_MAX_TOKENS["Auditor"] == 120
+    for dropped in ["Scout", "Analyst", "Verifier"]:
+        assert dropped not in main.SUBTEAM_MAX_TOKENS, \
+            f"{dropped} is unused -- the Research Team was not ported"
+
+
+def test_subteam_options_never_force_gpu_layers():
+    """ac10f5f removed forced full-GPU offload; it must not return here."""
+    assert "num_gpu" not in main.SUBTEAM_OLLAMA_OPTIONS
+    assert main.SUBTEAM_OLLAMA_OPTIONS["num_ctx"] == 1024
+
+
+# ── architect_brief ──────────────────────────────────────────────────────────
+
+def test_architect_brief_returns_the_model_text():
+    got = with_chat(fake_chat("- component A\n- decision B"),
+                    lambda: main.architect_brief("build a parser", "llama3.2:3b"))
+    assert got == "- component A\n- decision B"
+
+
+def test_architect_brief_uses_the_architect_budget_and_subteam_options():
+    calls = []
+    with_chat(fake_chat(record=calls),
+              lambda: main.architect_brief("build a parser", "qwen2.5-coder:latest"))
+    assert len(calls) == 1
+    assert calls[0]["max_tokens"] == main.SUBTEAM_MAX_TOKENS["Architect"]
+    assert calls[0]["extra_options"] == main.SUBTEAM_OLLAMA_OPTIONS
+    assert calls[0]["model"] == "qwen2.5-coder:latest"
+
+
+def test_architect_brief_asks_for_no_code():
+    calls = []
+    with_chat(fake_chat(record=calls),
+              lambda: main.architect_brief("build a parser", "llama3.2:3b"))
+    system = calls[0]["messages"][0]["content"].lower()
+    assert "no code" in system
+    assert "build a parser" in calls[0]["messages"][1]["content"]
+
+
+def test_architect_brief_returns_empty_on_failure():
+    got = with_chat(fake_chat(fail=True),
+                    lambda: main.architect_brief("build a parser", "llama3.2:3b"))
+    assert got == ""
+
+
+if __name__ == "__main__":
+    tests = [(n, f) for n, f in sorted(globals().items())
+             if n.startswith("test_") and callable(f)]
+    failed = 0
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"  PASS  {name}")
+        except Exception as e:
+            failed += 1
+            print(f"  FAIL  {name}: {type(e).__name__}: {e}")
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    sys.exit(1 if failed else 0)

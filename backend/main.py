@@ -1791,6 +1791,28 @@ AGENT_OLLAMA_OPTIONS: dict[str, dict] = {
 }
 
 
+# Sub-team micro-agents: short focused pre-passes that brief a main agent before
+# it runs. Tight budgets on purpose -- a brief is advisory context, not output.
+# Only the roles actually used are listed; the April version also carried
+# Scout/Analyst/Verifier entries for a Research Team that thought_graph already
+# covers, and unused constants are how that set went stale.
+SUBTEAM_MAX_TOKENS: dict[str, int] = {
+    "Architect": 200,   # 3 bullets of design, no code
+    "Reviewer":  120,   # correctness pass
+    "Auditor":   120,   # quality pass
+}
+
+# No num_gpu: ac10f5f removed the forced full-GPU offload that caused
+# pathological first-token latency. Layer placement stays Ollama's decision.
+SUBTEAM_OLLAMA_OPTIONS: dict = {
+    "num_ctx":        1024,   # micro-agents see one task, not a conversation
+    "repeat_penalty": 1.1,
+    "top_k":          10,
+    "top_p":          0.9,
+    "num_keep":       0,
+}
+
+
 class Subtask(BaseModel):
     id: str
     agent: str
@@ -2126,6 +2148,43 @@ async def thought_graph(question: str, model: str, n_paths: int = 2) -> str:
         return best or valid_paths[0]
     except Exception as e:
         _logger.debug(f"[thought_graph] Failed: {e}")
+        return ""
+
+
+# ── Sub-team pre-passes ───────────────────────────────────────────────────────
+# Same shape as thinking_loop/thought_graph above: run a cheap focused call,
+# return text the caller injects as a system brief, never raise.
+
+async def architect_brief(task: str, model: str) -> str:
+    """Design pre-pass for the Developer agent.
+
+    Returns a short technical approach, or "" if it could not be produced --
+    the brief is an enhancement, so the agent still runs without it.
+    """
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a Software Architect. Design a concise technical approach: "
+                "key components and decisions in 3 bullet points max. No code. "
+                "Never repeat yourself."
+            ),
+        },
+        {"role": "user", "content": f"Design the approach for: {task}"},
+    ]
+    try:
+        brief = await asyncio.wait_for(
+            ollama_chat_text(
+                messages,
+                model=model,
+                max_tokens=SUBTEAM_MAX_TOKENS["Architect"],
+                extra_options=SUBTEAM_OLLAMA_OPTIONS,
+            ),
+            timeout=25,
+        )
+        return brief or ""
+    except Exception as e:
+        _logger.warning(f"[architect_brief] Failed, continuing without it: {e}")
         return ""
 
 
